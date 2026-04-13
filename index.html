@@ -1,967 +1,1407 @@
-import React, { useEffect, useMemo, useState } from "react";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  ResponsiveContainer,
-  Tooltip,
-  Legend,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-} from "recharts";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Progress } from "@/components/ui/progress";
-import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Trash2,
-  PlusCircle,
-  Wallet,
-  Target,
-  TrendingDown,
-  TrendingUp,
-  PiggyBank,
-  Receipt,
-  ShieldCheck,
-  Pencil,
-  Landmark,
-} from "lucide-react";
-
-const STORAGE_KEY = "budgeting-tool-app-v3";
-
-const START_INCOME_CATEGORIES = ["House of Representatives", "Slice and Pie", "Misc"];
-const START_SPENDING_CATEGORIES = [
-  "Groceries",
-  "Student Loan",
-  "Rent/Utilities",
-  "Transportation",
-  "Entertainment",
-  "Food/Drink",
-  "Misc",
-];
-
-const CHART_COLORS = [
-  "#2563eb",
-  "#16a34a",
-  "#f59e0b",
-  "#dc2626",
-  "#7c3aed",
-  "#0891b2",
-  "#ea580c",
-  "#4f46e5",
-  "#65a30d",
-  "#db2777",
-];
-
-const todayISO = () => new Date().toISOString().split("T")[0];
-const currentMonthKey = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-};
-
-const formatCurrency = (value) =>
-  new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 2,
-  }).format(Number(value || 0));
-
-const daysBetween = (startDate, endDate) => {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  const ms = end.setHours(0, 0, 0, 0) - start.setHours(0, 0, 0, 0);
-  return Math.max(Math.ceil(ms / (1000 * 60 * 60 * 24)), 0);
-};
-
-const monthFromDate = (dateStr) => dateStr?.slice(0, 7) || currentMonthKey();
-
-function uid() {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function CustomTooltip({ active, payload }) {
-  if (!active || !payload || !payload.length) return null;
-  const item = payload[0];
-  return (
-    <div className="rounded-2xl border bg-white px-3 py-2 shadow-lg">
-      <p className="text-sm font-medium">{item.name}</p>
-      <p className="text-sm text-slate-600">{formatCurrency(item.value)}</p>
-    </div>
-  );
-}
-
-function DoughnutCard({ title, data, emptyLabel }) {
-  const total = data.reduce((sum, item) => sum + item.value, 0);
-
-  return (
-    <Card className="rounded-2xl shadow-sm">
-      <CardHeader>
-        <CardTitle className="text-base sm:text-lg">{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {total <= 0 ? (
-          <div className="flex h-[260px] sm:h-[320px] items-center justify-center rounded-2xl border border-dashed px-4 text-center text-slate-500">
-            {emptyLabel}
-          </div>
-        ) : (
-          <div className="h-[260px] sm:h-[320px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={data} dataKey="value" nameKey="name" innerRadius={55} outerRadius={95} paddingAngle={2}>
-                  {data.map((entry, index) => (
-                    <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip content={<CustomTooltip />} />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function CategoryManager({ title, categories, setCategories }) {
-  const [newCategory, setNewCategory] = useState("");
-
-  const addCategory = () => {
-    const cleaned = newCategory.trim();
-    if (!cleaned || categories.includes(cleaned)) return;
-    setCategories([...categories, cleaned]);
-    setNewCategory("");
-  };
-
-  return (
-    <Card className="rounded-2xl shadow-sm">
-      <CardHeader>
-        <CardTitle className="text-base sm:text-lg">{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-wrap gap-2">
-          {categories.map((category) => (
-            <Badge key={category} variant="secondary" className="rounded-full px-3 py-1 text-sm">
-              {category}
-              <button
-                onClick={() => setCategories(categories.filter((item) => item !== category))}
-                className="ml-2 inline-flex"
-                aria-label={`Remove ${category}`}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </Badge>
-          ))}
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Input
-            value={newCategory}
-            onChange={(e) => setNewCategory(e.target.value)}
-            placeholder="Add category"
-            onKeyDown={(e) => e.key === "Enter" && addCategory()}
-          />
-          <Button onClick={addCategory} className="rounded-xl">
-            <PlusCircle className="mr-2 h-4 w-4" /> Add
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function BudgetLimitCard({ spendingCategories, monthlyBudgets, setMonthlyBudgets, monthlySpent, activeMonth, setActiveMonth }) {
-  return (
-    <Card className="rounded-2xl shadow-sm">
-      <CardHeader>
-        <CardTitle className="text-base sm:text-lg">Monthly Budget Limits</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <Label>Month</Label>
-          <Input type="month" value={activeMonth} onChange={(e) => setActiveMonth(e.target.value)} />
-        </div>
-        <div className="space-y-3">
-          {spendingCategories.map((category) => {
-            const limit = monthlyBudgets[activeMonth]?.[category] || "";
-            const spent = monthlySpent[category] || 0;
-            const pct = limit ? Math.min((spent / Number(limit)) * 100, 100) : 0;
-            return (
-              <div key={category} className="rounded-2xl border border-slate-200 p-4">
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <p className="font-medium">{category}</p>
-                  <p className="text-sm text-slate-500">Spent: {formatCurrency(spent)}</p>
-                </div>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <Input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={limit}
-                    placeholder="Set monthly limit"
-                    onChange={(e) =>
-                      setMonthlyBudgets((prev) => ({
-                        ...prev,
-                        [activeMonth]: {
-                          ...(prev[activeMonth] || {}),
-                          [category]: e.target.value,
-                        },
-                      }))
-                    }
-                  />
-                  <div className="w-full">
-                    <Progress value={pct} className="h-3" />
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function EntryEditor({ title, fields, onChange, onSave, onCancel, saveLabel }) {
-  return (
-    <Card className="rounded-2xl border-blue-200 shadow-sm">
-      <CardHeader>
-        <CardTitle className="text-base sm:text-lg">{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {fields}
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Button onClick={onSave} className="rounded-xl">{saveLabel}</Button>
-          <Button onClick={onCancel} variant="outline" className="rounded-xl">Cancel</Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function TransactionList({ title, items, onDelete, onEdit, type, goalsById }) {
-  return (
-    <Card className="rounded-2xl shadow-sm">
-      <CardHeader>
-        <CardTitle className="text-base sm:text-lg">{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {items.length === 0 ? (
-          <p className="text-sm text-slate-500">No {type} entries yet.</p>
-        ) : (
-          <div className="space-y-2">
-            {items
-              .slice()
-              .reverse()
-              .map((item) => (
-                <div
-                  key={item.id}
-                  className="flex flex-col gap-3 rounded-2xl border border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div>
-                    <p className="font-medium text-slate-900">{item.category}</p>
-                    <p className="text-sm text-slate-500">{item.date}</p>
-                    {item.note ? <p className="text-sm text-slate-600">{item.note}</p> : null}
-                    {item.goalId ? <p className="text-xs font-medium text-blue-700">Linked goal: {goalsById[item.goalId] || "Deleted goal"}</p> : null}
-                  </div>
-                  <div className="flex items-center justify-between gap-1 sm:justify-end">
-                    <p className="px-2 font-semibold">{formatCurrency(item.amount)}</p>
-                    <Button variant="ghost" size="icon" onClick={() => onEdit(item.id)}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => onDelete(item.id)}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-export default function BudgetingToolApp() {
-  const [incomeCategories, setIncomeCategories] = useState(START_INCOME_CATEGORIES);
-  const [spendingCategories, setSpendingCategories] = useState(START_SPENDING_CATEGORIES);
-  const [incomeEntries, setIncomeEntries] = useState([]);
-  const [spendingEntries, setSpendingEntries] = useState([]);
-  const [goalContributions, setGoalContributions] = useState([]);
-  const [savingsGoals, setSavingsGoals] = useState([]);
-  const [monthlyBudgets, setMonthlyBudgets] = useState({});
-  const [activeMonth, setActiveMonth] = useState(currentMonthKey());
-  const [hasLoaded, setHasLoaded] = useState(false);
-  const [compactCharts, setCompactCharts] = useState(false);
-
-  const [incomeForm, setIncomeForm] = useState({
-    amount: "",
-    category: START_INCOME_CATEGORIES[0],
-    date: todayISO(),
-    note: "",
-  });
-
-  const [spendingForm, setSpendingForm] = useState({
-    amount: "",
-    category: START_SPENDING_CATEGORIES[0],
-    date: todayISO(),
-    note: "",
-    goalId: "none",
-  });
-
-  const [goalForm, setGoalForm] = useState({
-    name: "",
-    amount: "",
-    currentSaved: "",
-    deadline: "",
-  });
-
-  const [contributionForm, setContributionForm] = useState({
-    goalId: "none",
-    amount: "",
-    date: todayISO(),
-    note: "",
-  });
-
-  const [editingIncomeId, setEditingIncomeId] = useState("");
-  const [editingSpendingId, setEditingSpendingId] = useState("");
-  const [editingContributionId, setEditingContributionId] = useState("");
-  const [incomeEditForm, setIncomeEditForm] = useState({ amount: "", category: "", date: todayISO(), note: "" });
-  const [spendingEditForm, setSpendingEditForm] = useState({ amount: "", category: "", date: todayISO(), note: "", goalId: "none" });
-  const [contributionEditForm, setContributionEditForm] = useState({ amount: "", date: todayISO(), note: "", goalId: "none" });
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const handler = () => setCompactCharts(window.innerWidth < 640);
-    handler();
-    window.addEventListener("resize", handler);
-    return () => window.removeEventListener("resize", handler);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      setHasLoaded(true);
-      return;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Budgeting Tool</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #475569;
+      --border: #e2e8f0;
+      --shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
+      --green-bg: #dcfce7;
+      --green-text: #166534;
+      --yellow-bg: #fef3c7;
+      --yellow-text: #92400e;
+      --red-bg: #fee2e2;
+      --red-text: #991b1b;
+      --blue: #2563eb;
+      --radius: 18px;
     }
 
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        setIncomeCategories(parsed.incomeCategories || START_INCOME_CATEGORIES);
-        setSpendingCategories(parsed.spendingCategories || START_SPENDING_CATEGORIES);
-        setIncomeEntries(parsed.incomeEntries || []);
-        setSpendingEntries(parsed.spendingEntries || []);
-        setGoalContributions(parsed.goalContributions || []);
-        setSavingsGoals(parsed.savingsGoals || []);
-        setMonthlyBudgets(parsed.monthlyBudgets || {});
-        setActiveMonth(parsed.activeMonth || currentMonthKey());
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 12px;
+    }
+
+    .status-banner {
+      border-radius: 24px;
+      padding: 18px;
+      border: 1px solid transparent;
+      box-shadow: var(--shadow);
+      margin-bottom: 16px;
+    }
+
+    .status-green { background: var(--green-bg); color: var(--green-text); border-color: #bbf7d0; }
+    .status-yellow { background: var(--yellow-bg); color: var(--yellow-text); border-color: #fde68a; }
+    .status-red { background: var(--red-bg); color: var(--red-text); border-color: #fecaca; }
+
+    .status-grid, .summary-grid, .form-grid, .chart-grid, .tabs-grid, .goal-grid, .list-grid, .budget-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .status-grid { grid-template-columns: repeat(1, minmax(0, 1fr)); margin-top: 14px; }
+    .summary-grid { grid-template-columns: repeat(1, minmax(0, 1fr)); margin-bottom: 16px; }
+    .form-grid { grid-template-columns: repeat(1, minmax(0, 1fr)); margin-bottom: 16px; }
+    .chart-grid, .goal-grid, .list-grid, .budget-grid { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+    .tabs-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 16px; }
+
+    @media (min-width: 700px) {
+      .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .chart-grid, .budget-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .list-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (min-width: 980px) {
+      .status-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+      .summary-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+      .form-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .goal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .list-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .tabs-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 2rem; line-height: 1.1; }
+    h2 { font-size: 1.1rem; margin-bottom: 12px; }
+    h3 { font-size: 1rem; margin-bottom: 8px; }
+    .eyebrow { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; }
+    .muted { color: var(--muted); }
+    .value { font-size: 1.45rem; font-weight: 800; margin-top: 4px; }
+    .small { font-size: 0.9rem; }
+    .tiny { font-size: 0.8rem; }
+
+    label {
+      display: block;
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    input, select, button {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      font: inherit;
+      background: white;
+    }
+
+    button {
+      cursor: pointer;
+      background: var(--blue);
+      color: white;
+      border: none;
+      font-weight: 700;
+    }
+
+    button.secondary {
+      background: white;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    button.ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      width: auto;
+      padding: 8px 10px;
+    }
+
+    .field { margin-bottom: 12px; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .actions button { flex: 1 1 140px; }
+
+    .tab-btn {
+      background: white;
+      color: var(--text);
+      border: 1px solid var(--border);
+      font-weight: 700;
+    }
+
+    .tab-btn.active {
+      background: var(--blue);
+      color: white;
+      border-color: var(--blue);
+    }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      margin: 4px 6px 0 0;
+      border: 1px solid var(--border);
+      background: #f8fafc;
+    }
+
+    .pill-green { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+    .pill-yellow { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+    .pill-red { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+
+    .progress-wrap {
+      width: 100%;
+      height: 12px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: var(--blue);
+      width: 0%;
+    }
+
+    .entry, .budget-row, .month-row {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+
+    .entry-top, .goal-top, .budget-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .entry-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .subgrid-4, .subgrid-5 {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(1, minmax(0, 1fr));
+    }
+
+    @media (min-width: 700px) {
+      .subgrid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .subgrid-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+
+    @media (min-width: 980px) {
+      .subgrid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .subgrid-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    }
+
+    .mini-card {
+      background: #f8fafc;
+      border-radius: 16px;
+      padding: 12px;
+    }
+
+    .hidden { display: none !important; }
+    .danger-text { color: #b91c1c; font-weight: 700; margin-top: 8px; }
+    .ok-text { color: #166534; }
+
+    .chart-shell {
+      position: relative;
+      height: 280px;
+    }
+
+    .category-list { margin-bottom: 12px; }
+    .inline-form { display: flex; gap: 8px; flex-direction: column; }
+    @media (min-width: 700px) { .inline-form { flex-direction: row; } }
+
+    .footer-note {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-top: 12px;
+    }
+
+    .form-error {
+      color: #b91c1c;
+      font-size: 0.85rem;
+      margin-top: 8px;
+      min-height: 1.2em;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <section id="statusBanner" class="status-banner status-green">
+      <p class="eyebrow">Budget Status</p>
+      <h1 id="statusLabel">On Track</h1>
+      <p id="statusDetail" class="small" style="margin-top: 6px;">Your regular budget and sinking funds are pacing well.</p>
+      <div class="status-grid" id="statusStats"></div>
+    </section>
+
+    <section class="summary-grid" id="summaryGrid"></section>
+
+    <section class="form-grid">
+      <div class="card">
+        <h2>Add Income</h2>
+        <div class="field"><label for="incomeAmount">Amount</label><input id="incomeAmount" type="number" min="0" step="0.01" placeholder="0.00"></div>
+        <div class="field"><label for="incomeCategory">Category</label><select id="incomeCategory"></select></div>
+        <div class="field"><label for="incomeDate">Date</label><input id="incomeDate" type="date"></div>
+        <div class="field"><label for="incomeNote">Note</label><input id="incomeNote" type="text" placeholder="Optional"></div>
+        <button id="addIncomeBtn" type="button">Deposit Income</button>
+        <div id="incomeError" class="form-error"></div>
+      </div>
+
+      <div class="card">
+        <h2>Contribute to Goal</h2>
+        <div class="field"><label for="contributionGoal">Savings Goal</label><select id="contributionGoal"></select></div>
+        <div class="field"><label for="contributionAmount">Amount</label><input id="contributionAmount" type="number" min="0" step="0.01" placeholder="0.00"></div>
+        <div class="field"><label for="contributionDate">Date</label><input id="contributionDate" type="date"></div>
+        <div class="field"><label for="contributionNote">Note</label><input id="contributionNote" type="text" placeholder="Optional"></div>
+        <button id="addContributionBtn" type="button">Add Contribution</button>
+        <div id="contributionError" class="form-error"></div>
+      </div>
+
+      <div class="card">
+        <h2>Add Spending</h2>
+        <div class="field"><label for="spendingAmount">Amount</label><input id="spendingAmount" type="number" min="0" step="0.01" placeholder="0.00"></div>
+        <div class="field"><label for="spendingCategory">Category</label><select id="spendingCategory"></select></div>
+        <div class="field"><label for="spendingGoal">Pay using a goal envelope?</label><select id="spendingGoal"></select></div>
+        <div class="field"><label for="spendingDate">Date</label><input id="spendingDate" type="date"></div>
+        <div class="field"><label for="spendingNote">Note</label><input id="spendingNote" type="text" placeholder="Optional"></div>
+        <button id="addSpendingBtn" type="button">Add Expense</button>
+        <div id="spendingError" class="form-error"></div>
+      </div>
+
+      <div class="card">
+        <h2>Add Savings Goal</h2>
+        <div class="field"><label for="goalName">Goal Name</label><input id="goalName" type="text" placeholder="Flight, emergency fund, deposit"></div>
+        <div class="field"><label for="goalAmount">Target Amount</label><input id="goalAmount" type="number" min="0" step="0.01" placeholder="0.00"></div>
+        <div class="field"><label for="goalCurrentSaved">Starting Envelope Balance</label><input id="goalCurrentSaved" type="number" min="0" step="0.01" placeholder="0.00"></div>
+        <div class="field"><label for="goalDeadline">Deadline</label><input id="goalDeadline" type="date"></div>
+        <button id="addGoalBtn" type="button">Create Goal</button>
+        <div id="goalError" class="form-error"></div>
+      </div>
+    </section>
+
+    <section class="card hidden" id="editorCard">
+      <h2 id="editorTitle">Edit Entry</h2>
+      <div id="editorFields"></div>
+      <div id="editorError" class="form-error"></div>
+      <div class="actions" style="margin-top: 10px;">
+        <button id="saveEditBtn" type="button">Save Changes</button>
+        <button id="cancelEditBtn" class="secondary" type="button">Cancel</button>
+      </div>
+    </section>
+
+    <section class="tabs-grid" id="tabs"></section>
+
+    <section id="tab-dashboard" class="tab-panel active">
+      <div class="list-grid">
+        <div class="card">
+          <h2>Recent Income</h2>
+          <div id="incomeList"></div>
+        </div>
+        <div class="card">
+          <h2>Recent Spending</h2>
+          <div id="spendingList"></div>
+        </div>
+        <div class="card">
+          <h2>Goal Contributions</h2>
+          <div id="contributionList"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-charts" class="tab-panel">
+      <div class="chart-grid">
+        <div class="card"><h2>Income by Source</h2><div class="chart-shell"><canvas id="incomeChart"></canvas></div></div>
+        <div class="card"><h2>Regular Spending by Category</h2><div class="chart-shell"><canvas id="spendingChart"></canvas></div></div>
+      </div>
+      <div class="chart-grid" style="margin-top: 12px;">
+        <div class="card"><h2>Goal Contributions by Savings Goal</h2><div class="chart-shell"><canvas id="contributionChart"></canvas></div></div>
+        <div class="card"><h2>Goal Purchases by Savings Goal</h2><div class="chart-shell"><canvas id="goalPurchaseChart"></canvas></div></div>
+      </div>
+      <div class="card" style="margin-top: 12px;">
+        <h2 id="budgetChartTitle">Budget vs. Actual</h2>
+        <div class="chart-shell"><canvas id="budgetChart"></canvas></div>
+      </div>
+    </section>
+
+    <section id="tab-goals" class="tab-panel">
+      <div class="goal-grid" id="goalsContainer"></div>
+    </section>
+
+    <section id="tab-rollover" class="tab-panel">
+      <div class="card">
+        <h2>Monthly Rollover Savings Tracking</h2>
+        <div id="rolloverContainer"></div>
+      </div>
+    </section>
+
+    <section id="tab-budgets" class="tab-panel">
+      <div class="card">
+        <h2>Monthly Budget Limits</h2>
+        <div class="field"><label for="activeMonth">Month</label><input id="activeMonth" type="month"></div>
+        <div id="budgetLimitsContainer"></div>
+      </div>
+    </section>
+
+    <section id="tab-categories" class="tab-panel">
+      <div class="budget-grid">
+        <div class="card">
+          <h2>Income Categories</h2>
+          <div class="category-list" id="incomeCategoryPills"></div>
+          <div class="inline-form">
+            <input id="newIncomeCategory" type="text" placeholder="Add category">
+            <button id="addIncomeCategoryBtn" type="button">Add</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Spending Categories</h2>
+          <div class="category-list" id="spendingCategoryPills"></div>
+          <div class="inline-form">
+            <input id="newSpendingCategory" type="text" placeholder="Add category">
+            <button id="addSpendingCategoryBtn" type="button">Add</button>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:12px;">
+        <h2>Backup and Restore</h2>
+        <p class="small muted" style="margin-bottom:12px;">Export saves all current app data to a JSON file. Import replaces all current app data with the contents of the selected JSON backup file.</p>
+        <div class="actions">
+          <button id="exportJsonBtn" type="button">Export JSON Backup</button>
+          <input id="importJsonInput" type="file" accept="application/json,.json">
+        </div>
+        <p class="footer-note">Import fully replaces current data after confirmation. Use export first if you want a safety backup.</p>
+      </div>
+      <p class="footer-note">All data is saved in your browser with local storage. If you clear your browser storage or switch devices, the data will not carry over automatically unless you export and re-import a backup.</p>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    const STORAGE_KEY = "budgeting-tool-github-pages-v2";
+    const START_INCOME_CATEGORIES = ["House of Representatives", "Slice and Pie", "Misc"];
+    const START_SPENDING_CATEGORIES = ["Groceries", "Student Loan", "Rent/Utilities", "Transportation", "Entertainment", "Food/Drink", "Misc"];
+    const CHART_COLORS = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2", "#ea580c", "#4f46e5", "#65a30d", "#db2777"];
+    const TABS = [["dashboard", "Dashboard"], ["charts", "Charts"], ["goals", "Goals"], ["rollover", "Rollover"], ["budgets", "Budgets"], ["categories", "Categories"]];
+
+    const state = {
+      incomeCategories: [...START_INCOME_CATEGORIES],
+      spendingCategories: [...START_SPENDING_CATEGORIES],
+      incomeEntries: [],
+      spendingEntries: [],
+      goalContributions: [],
+      savingsGoals: [],
+      monthlyBudgets: {},
+      activeMonth: currentMonthKey(),
+      editor: { type: null, id: null },
+      charts: {},
+    };
+
+    function todayISO() {
+      return new Date().toISOString().split("T")[0];
+    }
+
+    function currentMonthKey() {
+      const d = new Date();
+      return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+    }
+
+    function uid() {
+      if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+      return Date.now() + "-" + Math.random().toString(36).slice(2, 10);
+    }
+
+    function formatCurrency(value) {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: 2,
+      }).format(Number(value || 0));
+    }
+
+    function monthFromDate(dateStr) {
+      return typeof dateStr === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? dateStr.slice(0, 7) : currentMonthKey();
+    }
+
+    function daysBetween(startDate, endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+      const ms = end.setHours(0, 0, 0, 0) - start.setHours(0, 0, 0, 0);
+      return Math.max(Math.ceil(ms / (1000 * 60 * 60 * 24)), 0);
+    }
+
+    function isValidDate(value) {
+      return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(value).getTime());
+    }
+
+    function normalizeAmount(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? Math.round(n * 100) / 100 : NaN;
+    }
+
+    function safeString(value) {
+      return typeof value === "string" ? value.trim() : "";
+    }
+
+    function setError(id, message) {
+      const node = document.getElementById(id);
+      if (node) node.textContent = message || "";
+    }
+
+    function clearErrors() {
+      ["incomeError", "contributionError", "spendingError", "goalError", "editorError"].forEach(function(id) { setError(id, ""); });
+    }
+
+    function sanitizeCategoryArray(arr, fallback) {
+      if (!Array.isArray(arr)) return fallback.slice();
+      const cleaned = Array.from(new Set(arr.map(safeString).filter(Boolean)));
+      return cleaned.length ? cleaned : fallback.slice();
+    }
+
+    function sanitizeBudgetMap(raw, categories) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+      const result = {};
+      Object.entries(raw).forEach(function(entry) {
+        const month = entry[0];
+        const values = entry[1];
+        if (!/^\d{4}-\d{2}$/.test(month) || !values || typeof values !== "object" || Array.isArray(values)) return;
+        const monthValues = {};
+        categories.forEach(function(category) {
+          const amount = normalizeAmount(values[category]);
+          if (Number.isFinite(amount) && amount >= 0) monthValues[category] = String(amount);
+        });
+        result[month] = monthValues;
+      });
+      return result;
+    }
+
+    function sanitizeGoals(rawGoals) {
+      if (!Array.isArray(rawGoals)) return [];
+      return rawGoals.map(function(goal) {
+        const name = safeString(goal && goal.name);
+        const amount = normalizeAmount(goal && goal.amount);
+        const currentSaved = normalizeAmount(goal && goal.currentSaved);
+        const deadline = safeString(goal && goal.deadline);
+        const id = safeString(goal && goal.id) || uid();
+        if (!name || !Number.isFinite(amount) || amount <= 0 || !isValidDate(deadline)) return null;
+        return { id: id, name: name, amount: amount, currentSaved: Number.isFinite(currentSaved) && currentSaved >= 0 ? currentSaved : 0, deadline: deadline };
+      }).filter(Boolean);
+    }
+
+    function sanitizeIncomeEntries(rawEntries, categories) {
+      if (!Array.isArray(rawEntries)) return [];
+      return rawEntries.map(function(entry) {
+        const amount = normalizeAmount(entry && entry.amount);
+        const category = safeString(entry && entry.category);
+        const date = safeString(entry && entry.date);
+        const note = safeString(entry && entry.note);
+        const id = safeString(entry && entry.id) || uid();
+        if (!Number.isFinite(amount) || amount <= 0 || !category || categories.indexOf(category) === -1 || !isValidDate(date)) return null;
+        return { id: id, amount: amount, category: category, date: date, note: note };
+      }).filter(Boolean);
+    }
+
+    function sanitizeSpendingEntries(rawEntries, categories, validGoalIds) {
+      if (!Array.isArray(rawEntries)) return [];
+      return rawEntries.map(function(entry) {
+        const amount = normalizeAmount(entry && entry.amount);
+        const category = safeString(entry && entry.category);
+        const date = safeString(entry && entry.date);
+        const note = safeString(entry && entry.note);
+        const id = safeString(entry && entry.id) || uid();
+        const rawGoalId = safeString(entry && entry.goalId);
+        const goalId = rawGoalId && validGoalIds.has(rawGoalId) ? rawGoalId : "";
+        if (!Number.isFinite(amount) || amount <= 0 || !category || categories.indexOf(category) === -1 || !isValidDate(date)) return null;
+        return { id: id, amount: amount, category: category, goalId: goalId, date: date, note: note };
+      }).filter(Boolean);
+    }
+
+    function sanitizeGoalContributions(rawEntries, validGoalIds) {
+      if (!Array.isArray(rawEntries)) return [];
+      return rawEntries.map(function(entry) {
+        const amount = normalizeAmount(entry && entry.amount);
+        const goalId = safeString(entry && entry.goalId);
+        const date = safeString(entry && entry.date);
+        const note = safeString(entry && entry.note);
+        const id = safeString(entry && entry.id) || uid();
+        if (!Number.isFinite(amount) || amount <= 0 || !validGoalIds.has(goalId) || !isValidDate(date)) return null;
+        return { id: id, goalId: goalId, amount: amount, date: date, note: note };
+      }).filter(Boolean);
+    }
+
+    function saveState() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        incomeCategories: state.incomeCategories,
+        spendingCategories: state.spendingCategories,
+        incomeEntries: state.incomeEntries,
+        spendingEntries: state.spendingEntries,
+        goalContributions: state.goalContributions,
+        savingsGoals: state.savingsGoals,
+        monthlyBudgets: state.monthlyBudgets,
+        activeMonth: state.activeMonth,
+      }));
+    }
+
+    function applyImportedState(parsed) {
+      const incomeCategories = sanitizeCategoryArray(parsed && parsed.incomeCategories, START_INCOME_CATEGORIES);
+      const spendingCategories = sanitizeCategoryArray(parsed && parsed.spendingCategories, START_SPENDING_CATEGORIES);
+      const savingsGoals = sanitizeGoals(parsed && parsed.savingsGoals);
+      const validGoalIds = new Set(savingsGoals.map(function(goal) { return goal.id; }));
+      state.incomeCategories = incomeCategories;
+      state.spendingCategories = spendingCategories;
+      state.savingsGoals = savingsGoals;
+      state.incomeEntries = sanitizeIncomeEntries(parsed && parsed.incomeEntries, incomeCategories);
+      state.spendingEntries = sanitizeSpendingEntries(parsed && parsed.spendingEntries, spendingCategories, validGoalIds);
+      state.goalContributions = sanitizeGoalContributions(parsed && parsed.goalContributions, validGoalIds);
+      state.monthlyBudgets = sanitizeBudgetMap(parsed && parsed.monthlyBudgets, spendingCategories);
+      state.activeMonth = parsed && typeof parsed.activeMonth === "string" && /^\d{4}-\d{2}$/.test(parsed.activeMonth) ? parsed.activeMonth : currentMonthKey();
+      state.editor = { type: null, id: null };
+    }
+
+    function loadState() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        applyImportedState(JSON.parse(raw));
+      } catch (err) {
+        console.error("Failed to load saved data", err);
       }
-    } catch (error) {
-      console.error("Failed to load budget data", error);
-    } finally {
-      setHasLoaded(true);
     }
-  }, []);
 
-  useEffect(() => {
-    if (!hasLoaded || typeof window === "undefined") return;
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        incomeCategories,
-        spendingCategories,
-        incomeEntries,
-        spendingEntries,
-        goalContributions,
-        savingsGoals,
-        monthlyBudgets,
-        activeMonth,
-      })
-    );
-  }, [
-    hasLoaded,
-    incomeCategories,
-    spendingCategories,
-    incomeEntries,
-    spendingEntries,
-    goalContributions,
-    savingsGoals,
-    monthlyBudgets,
-    activeMonth,
-  ]);
+    function getGoalsById() {
+      return Object.fromEntries(state.savingsGoals.map(function(goal) { return [goal.id, goal.name]; }));
+    }
 
-  const goalsById = useMemo(() => Object.fromEntries(savingsGoals.map((goal) => [goal.id, goal.name])), [savingsGoals]);
+    function sum(arr, fn) {
+      return arr.reduce(function(total, item) { return total + fn(item); }, 0);
+    }
 
-  const totalIncome = useMemo(() => incomeEntries.reduce((sum, entry) => sum + Number(entry.amount), 0), [incomeEntries]);
-  const regularSpendingTotal = useMemo(() => spendingEntries.filter((entry) => !entry.goalId).reduce((sum, entry) => sum + Number(entry.amount), 0), [spendingEntries]);
-  const goalPurchasesTotal = useMemo(() => spendingEntries.filter((entry) => entry.goalId).reduce((sum, entry) => sum + Number(entry.amount), 0), [spendingEntries]);
-  const totalGoalContributions = useMemo(() => goalContributions.reduce((sum, entry) => sum + Number(entry.amount), 0), [goalContributions]);
-  const totalStartingGoalBalances = useMemo(() => savingsGoals.reduce((sum, goal) => sum + Number(goal.currentSaved || 0), 0), [savingsGoals]);
+    function getAnalytics() {
+      const totalIncome = sum(state.incomeEntries, function(item) { return item.amount; });
+      const regularSpendingTotal = sum(state.spendingEntries.filter(function(item) { return !item.goalId; }), function(item) { return item.amount; });
+      const totalGoalContributions = sum(state.goalContributions, function(item) { return item.amount; });
+      const totalStartingGoalBalances = sum(state.savingsGoals, function(item) { return item.currentSaved || 0; });
+      const freeCash = totalIncome - regularSpendingTotal - totalGoalContributions;
 
-  const freeCash = useMemo(() => {
-    const value = totalIncome - regularSpendingTotal - totalGoalContributions;
-    return Number(value || 0);
-  }, [totalIncome, regularSpendingTotal, totalGoalContributions]);
-
-  const monthlySpent = useMemo(() => {
-    return spendingEntries
-      .filter((entry) => monthFromDate(entry.date) === activeMonth && !entry.goalId)
-      .reduce((acc, entry) => {
-        acc[entry.category] = (acc[entry.category] || 0) + Number(entry.amount);
+      const monthlySpent = state.spendingEntries.filter(function(entry) {
+        return monthFromDate(entry.date) === state.activeMonth && !entry.goalId;
+      }).reduce(function(acc, entry) {
+        acc[entry.category] = (acc[entry.category] || 0) + entry.amount;
         return acc;
       }, {});
-  }, [spendingEntries, activeMonth]);
 
-  const budgetVsActualData = useMemo(() => {
-    return spendingCategories.map((category) => ({
-      name: category,
-      limit: Number(monthlyBudgets[activeMonth]?.[category] || 0),
-      spent: Number(monthlySpent[category] || 0),
-    }));
-  }, [spendingCategories, monthlyBudgets, activeMonth, monthlySpent]);
+      const budgetVsActualData = state.spendingCategories.map(function(category) {
+        return {
+          name: category,
+          limit: normalizeAmount((state.monthlyBudgets[state.activeMonth] || {})[category]) || 0,
+          spent: normalizeAmount(monthlySpent[category]) || 0,
+        };
+      });
 
-  const totalBudgetLimit = useMemo(() => budgetVsActualData.reduce((sum, item) => sum + item.limit, 0), [budgetVsActualData]);
-  const totalBudgetSpent = useMemo(() => budgetVsActualData.reduce((sum, item) => sum + item.spent, 0), [budgetVsActualData]);
+      const totalBudgetLimit = sum(budgetVsActualData, function(item) { return item.limit; });
+      const totalBudgetSpent = sum(budgetVsActualData, function(item) { return item.spent; });
+      let budgetHealth = null;
+      if (totalBudgetLimit > 0) {
+        const ratio = totalBudgetSpent / totalBudgetLimit;
+        if (ratio <= 0.8) budgetHealth = "good";
+        else if (ratio <= 1) budgetHealth = "tight";
+        else budgetHealth = "bad";
+      }
 
-  const budgetHealth = useMemo(() => {
-    if (totalBudgetLimit <= 0) return null;
-    const ratio = totalBudgetSpent / totalBudgetLimit;
-    if (ratio <= 0.8) return "good";
-    if (ratio <= 1) return "tight";
-    return "bad";
-  }, [totalBudgetLimit, totalBudgetSpent]);
+      const goalAnalysis = state.savingsGoals.map(function(goal) {
+        const contributions = sum(state.goalContributions.filter(function(entry) { return entry.goalId === goal.id; }), function(item) { return item.amount; });
+        const purchases = sum(state.spendingEntries.filter(function(entry) { return entry.goalId === goal.id; }), function(item) { return item.amount; });
+        const envelopeBalance = goal.currentSaved + contributions - purchases;
+        const savedTowardGoal = goal.currentSaved + contributions;
+        const effectiveRemaining = Math.max(goal.amount - envelopeBalance, 0);
+        const purchaseCoverageGap = Math.max(purchases - (goal.currentSaved + contributions), 0);
+        const progress = goal.amount > 0 ? (savedTowardGoal / goal.amount) * 100 : 0;
+        const daysLeft = daysBetween(todayISO(), goal.deadline);
+        const perDayNeeded = daysLeft > 0 ? effectiveRemaining / daysLeft : effectiveRemaining;
+        let status = "on-track";
+        if (effectiveRemaining <= 0 && envelopeBalance >= 0) status = "met";
+        else if (daysLeft <= 0 || envelopeBalance < 0) status = "late";
+        else if (perDayNeeded <= 5) status = "on-track";
+        else if (perDayNeeded <= 15) status = "close";
+        else status = "off-pace";
+        return {
+          id: goal.id,
+          name: goal.name,
+          amount: goal.amount,
+          currentSaved: goal.currentSaved,
+          deadline: goal.deadline,
+          contributions: contributions,
+          purchases: purchases,
+          envelopeBalance: envelopeBalance,
+          savedTowardGoal: savedTowardGoal,
+          effectiveRemaining: effectiveRemaining,
+          purchaseCoverageGap: purchaseCoverageGap,
+          progress: Math.max(0, Math.min(progress, 100)),
+          daysLeft: daysLeft,
+          perDayNeeded: perDayNeeded,
+          status: status,
+        };
+      });
 
-  const goalAnalysis = useMemo(() => {
-    const today = todayISO();
+      const totalEnvelopeBalances = sum(goalAnalysis, function(goal) { return goal.envelopeBalance; });
+      const months = new Set([].concat(
+        state.incomeEntries.map(function(item) { return monthFromDate(item.date); }),
+        state.spendingEntries.filter(function(item) { return !item.goalId; }).map(function(item) { return monthFromDate(item.date); }),
+        state.goalContributions.map(function(item) { return monthFromDate(item.date); }),
+        [currentMonthKey()]
+      ));
+      const orderedMonths = Array.from(months).sort();
+      let running = 0;
+      const monthlyRollover = orderedMonths.map(function(month) {
+        const income = sum(state.incomeEntries.filter(function(item) { return monthFromDate(item.date) === month; }), function(item) { return item.amount; });
+        const regularSpend = sum(state.spendingEntries.filter(function(item) { return monthFromDate(item.date) === month && !item.goalId; }), function(item) { return item.amount; });
+        const contributions = sum(state.goalContributions.filter(function(item) { return monthFromDate(item.date) === month; }), function(item) { return item.amount; });
+        const monthNet = income - regularSpend - contributions;
+        running += monthNet;
+        return { month: month, income: income, regularSpend: regularSpend, contributions: contributions, monthNet: monthNet, rolloverBalance: running };
+      });
+      const rolloverCurrent = monthlyRollover.length ? monthlyRollover[monthlyRollover.length - 1].rolloverBalance : 0;
 
-    return savingsGoals.map((goal) => {
-      const contributions = goalContributions
-        .filter((entry) => entry.goalId === goal.id)
-        .reduce((sum, entry) => sum + Number(entry.amount), 0);
-
-      const purchases = spendingEntries
-        .filter((entry) => entry.goalId === goal.id)
-        .reduce((sum, entry) => sum + Number(entry.amount), 0);
-
-      const envelopeBalance = Number(goal.currentSaved || 0) + contributions - purchases;
-      const savedTowardGoal = Number(goal.currentSaved || 0) + contributions;
-      const remainingToSave = Math.max(goal.amount - savedTowardGoal, 0);
-      const purchaseCoverageGap = Math.max(purchases - (Number(goal.currentSaved || 0) + contributions), 0);
-      const effectiveRemaining = Math.max(goal.amount - envelopeBalance, 0);
-      const progress = goal.amount > 0 ? (savedTowardGoal / goal.amount) * 100 : 0;
-      const daysLeft = daysBetween(today, goal.deadline);
-      const perDayNeeded = daysLeft > 0 ? effectiveRemaining / daysLeft : effectiveRemaining;
-
-      let status = "on-track";
-      if (effectiveRemaining <= 0 && envelopeBalance >= 0) status = "met";
-      else if (daysLeft <= 0 || envelopeBalance < 0) status = "late";
-      else if (perDayNeeded <= 5) status = "on-track";
-      else if (perDayNeeded <= 15) status = "close";
-      else status = "off-pace";
+      const anyOff = goalAnalysis.some(function(goal) { return goal.status === "off-pace" || goal.status === "late"; });
+      const anyClose = goalAnalysis.some(function(goal) { return goal.status === "close"; });
+      let dashboardStatus = { label: "On Track", tone: "green", detail: "Your regular budget and sinking funds are pacing well." };
+      if (freeCash < 0 || anyOff || budgetHealth === "bad") dashboardStatus = { label: "Off Pace", tone: "red", detail: "Your budget, free cash, or sinking funds need attention." };
+      else if (anyClose || budgetHealth === "tight") dashboardStatus = { label: "Cutting it Close", tone: "yellow", detail: "You can still make it, but your margin is thin." };
 
       return {
-        ...goal,
-        contributions,
-        purchases,
-        envelopeBalance,
-        savedTowardGoal,
-        remainingToSave,
-        purchaseCoverageGap,
-        effectiveRemaining,
-        progress: Math.max(0, Math.min(progress, 100)),
-        daysLeft,
-        perDayNeeded,
-        status,
+        totalIncome: totalIncome,
+        regularSpendingTotal: regularSpendingTotal,
+        totalGoalContributions: totalGoalContributions,
+        totalStartingGoalBalances: totalStartingGoalBalances,
+        totalEnvelopeBalances: totalEnvelopeBalances,
+        freeCash: freeCash,
+        monthlySpent: monthlySpent,
+        budgetVsActualData: budgetVsActualData,
+        totalBudgetSpent: totalBudgetSpent,
+        goalAnalysis: goalAnalysis,
+        monthlyRollover: monthlyRollover,
+        rolloverCurrent: rolloverCurrent,
+        dashboardStatus: dashboardStatus,
       };
-    });
-  }, [savingsGoals, goalContributions, spendingEntries]);
+    }
 
-  const totalEnvelopeBalances = useMemo(() => goalAnalysis.reduce((sum, goal) => sum + goal.envelopeBalance, 0), [goalAnalysis]);
+    function groupedData(items, keyFn) {
+      const grouped = {};
+      items.forEach(function(item) {
+        const key = safeString(keyFn(item)) || "Uncategorized";
+        grouped[key] = (grouped[key] || 0) + item.amount;
+      });
+      return Object.entries(grouped).map(function(entry) {
+        return { label: entry[0], value: entry[1] };
+      });
+    }
 
-  const monthlyRollover = useMemo(() => {
-    const months = new Set([
-      ...incomeEntries.map((item) => monthFromDate(item.date)),
-      ...spendingEntries.filter((item) => !item.goalId).map((item) => monthFromDate(item.date)),
-      ...goalContributions.map((item) => monthFromDate(item.date)),
-      currentMonthKey(),
-    ]);
+    function buildTabs() {
+      const wrap = document.getElementById("tabs");
+      wrap.innerHTML = "";
+      TABS.forEach(function(tab, index) {
+        const id = tab[0];
+        const label = tab[1];
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "tab-btn" + (index === 0 ? " active" : "");
+        btn.textContent = label;
+        btn.addEventListener("click", function() {
+          document.querySelectorAll(".tab-btn").forEach(function(node) { node.classList.remove("active"); });
+          document.querySelectorAll(".tab-panel").forEach(function(node) { node.classList.remove("active"); });
+          btn.classList.add("active");
+          document.getElementById("tab-" + id).classList.add("active");
+        });
+        wrap.appendChild(btn);
+      });
+    }
 
-    const orderedMonths = Array.from(months).sort();
-    let running = 0;
+    function populateSelect(select, options, placeholder, includeNone) {
+      if (includeNone === undefined) includeNone = false;
+      const current = select.value;
+      select.innerHTML = "";
+      if (includeNone) {
+        const option = document.createElement("option");
+        option.value = "none";
+        option.textContent = placeholder;
+        select.appendChild(option);
+      }
+      options.forEach(function(opt) {
+        const option = document.createElement("option");
+        option.value = opt.value;
+        option.textContent = opt.label;
+        select.appendChild(option);
+      });
+      if (options.length === 0 && !includeNone) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = placeholder;
+        select.appendChild(option);
+      }
+      const found = Array.prototype.some.call(select.options, function(option) { return option.value === current; });
+      if (found) select.value = current;
+      else if (select.options.length) select.selectedIndex = 0;
+    }
 
-    return orderedMonths.map((month) => {
-      const income = incomeEntries.filter((item) => monthFromDate(item.date) === month).reduce((sum, item) => sum + Number(item.amount), 0);
-      const regularSpend = spendingEntries.filter((item) => monthFromDate(item.date) === month && !item.goalId).reduce((sum, item) => sum + Number(item.amount), 0);
-      const contributions = goalContributions.filter((item) => monthFromDate(item.date) === month).reduce((sum, item) => sum + Number(item.amount), 0);
-      const monthNet = income - regularSpend - contributions;
-      running += monthNet;
+    function renderCategoryPills(containerId, categories, onRemove) {
+      const container = document.getElementById(containerId);
+      container.innerHTML = "";
+      categories.forEach(function(category) {
+        const pill = document.createElement("span");
+        pill.className = "pill";
+        const label = document.createElement("span");
+        label.textContent = category;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ghost";
+        btn.textContent = "Remove";
+        btn.style.padding = "4px 8px";
+        btn.addEventListener("click", function() { onRemove(category); });
+        pill.appendChild(label);
+        pill.appendChild(btn);
+        container.appendChild(pill);
+      });
+    }
+
+    function renderEntryList(containerId, items, type) {
+      const container = document.getElementById(containerId);
+      const goalsById = getGoalsById();
+      container.innerHTML = "";
+      if (items.length === 0) {
+        container.innerHTML = "<p class=\"muted small\">No " + escapeHtml(type) + " entries yet.</p>";
+        return;
+      }
+      items.slice().reverse().forEach(function(item) {
+        const div = document.createElement("div");
+        div.className = "entry";
+        const title = type === "contribution" ? goalsById[item.goalId] || "Deleted goal" : item.category || "Entry";
+        const linkedGoal = item.goalId && type !== "contribution" ? "<p class=\"tiny\" style=\"color:#1d4ed8; font-weight:700; margin-top:4px;\">Linked goal: " + escapeHtml(goalsById[item.goalId] || "Deleted goal") + "</p>" : "";
+        div.innerHTML =
+          "<div class=\"entry-top\">" +
+            "<div>" +
+              "<h3>" + escapeHtml(title) + "</h3>" +
+              "<p class=\"small muted\">" + escapeHtml(item.date || "") + "</p>" +
+              (item.note ? "<p class=\"small muted\" style=\"margin-top:4px;\">" + escapeHtml(item.note) + "</p>" : "") +
+              linkedGoal +
+            "</div>" +
+            "<div style=\"text-align:right; min-width: 120px;\">" +
+              "<p class=\"value\" style=\"font-size:1.1rem;\">" + formatCurrency(item.amount) + "</p>" +
+              "<div class=\"entry-actions\">" +
+                "<button type=\"button\" class=\"ghost\" data-edit=\"" + escapeHtmlAttr(item.id) + "\">Edit</button>" +
+                "<button type=\"button\" class=\"ghost\" data-delete=\"" + escapeHtmlAttr(item.id) + "\">Delete</button>" +
+              "</div>" +
+            "</div>" +
+          "</div>";
+        div.querySelector("[data-edit]").addEventListener("click", function() { startEdit(type, item.id); });
+        div.querySelector("[data-delete]").addEventListener("click", function() { deleteEntry(type, item.id); });
+        container.appendChild(div);
+      });
+    }
+
+    function renderStatus(analytics) {
+      const banner = document.getElementById("statusBanner");
+      banner.className = "status-banner status-" + analytics.dashboardStatus.tone;
+      document.getElementById("statusLabel").textContent = analytics.dashboardStatus.label;
+      document.getElementById("statusDetail").textContent = analytics.dashboardStatus.detail;
+      const stats = [["Total Income", analytics.totalIncome], ["Regular Spending", analytics.regularSpendingTotal], ["Goal Contributions", analytics.totalGoalContributions], ["Goal Envelope Total", analytics.totalEnvelopeBalances], ["Free Cash", analytics.freeCash]];
+      const wrap = document.getElementById("statusStats");
+      wrap.innerHTML = "";
+      stats.forEach(function(pair) {
+        const label = pair[0];
+        const value = pair[1];
+        const card = document.createElement("div");
+        card.className = "mini-card";
+        card.innerHTML = "<p class=\"eyebrow muted\">" + escapeHtml(label) + "</p><p class=\"value\">" + formatCurrency(value) + "</p>";
+        wrap.appendChild(card);
+      });
+    }
+
+    function renderSummary(analytics) {
+      const cards = [["Net Cash Position", analytics.totalIncome - analytics.regularSpendingTotal - analytics.totalGoalContributions], ["Goal Envelopes", analytics.totalEnvelopeBalances], ["Monthly Budget Spend", analytics.totalBudgetSpent], ["Rollover Balance", analytics.rolloverCurrent], ["Goal Starts", analytics.totalStartingGoalBalances]];
+      const wrap = document.getElementById("summaryGrid");
+      wrap.innerHTML = "";
+      cards.forEach(function(pair) {
+        const label = pair[0];
+        const value = pair[1];
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = "<p class=\"small muted\">" + escapeHtml(label) + "</p><p class=\"value\">" + formatCurrency(value) + "</p>";
+        wrap.appendChild(card);
+      });
+    }
+
+    function renderGoals(analytics) {
+      const container = document.getElementById("goalsContainer");
+      container.innerHTML = "";
+      if (analytics.goalAnalysis.length === 0) {
+        container.innerHTML = "<div class=\"card\"><p class=\"muted\">No savings goals yet. Add one above to start a sinking fund.</p></div>";
+        return;
+      }
+      analytics.goalAnalysis.forEach(function(goal) {
+        const card = document.createElement("div");
+        card.className = "card";
+        const toneClass = goal.status === "met" || goal.status === "on-track" ? "pill-green" : goal.status === "close" ? "pill-yellow" : "pill-red";
+        const toneLabel = goal.status === "met" ? "Funded" : goal.status === "on-track" ? "On Track" : goal.status === "close" ? "Cutting it Close" : "Needs Attention";
+        card.innerHTML =
+          "<div class=\"goal-top\">" +
+            "<div>" +
+              "<h2>" + escapeHtml(goal.name) + "</h2>" +
+              "<p class=\"small muted\">Deadline: " + escapeHtml(goal.deadline) + "</p>" +
+            "</div>" +
+            "<button type=\"button\" class=\"ghost\" data-delete-goal=\"" + escapeHtmlAttr(goal.id) + "\">Delete Goal</button>" +
+          "</div>" +
+          "<div class=\"subgrid-4\" style=\"margin-top:12px;\">" +
+            "<div class=\"mini-card\"><p class=\"eyebrow muted\">Target</p><p class=\"value\">" + formatCurrency(goal.amount) + "</p></div>" +
+            "<div class=\"mini-card\"><p class=\"eyebrow muted\">Contributions</p><p class=\"value\">" + formatCurrency(goal.contributions + goal.currentSaved) + "</p></div>" +
+            "<div class=\"mini-card\"><p class=\"eyebrow muted\">Purchases</p><p class=\"value\">" + formatCurrency(goal.purchases) + "</p></div>" +
+            "<div class=\"mini-card\"><p class=\"eyebrow muted\">Envelope Balance</p><p class=\"value\">" + formatCurrency(goal.envelopeBalance) + "</p></div>" +
+          "</div>" +
+          "<div style=\"margin-top:14px;\">" +
+            "<div class=\"entry-top\"><p class=\"small\">Saved Toward Target</p><p class=\"small\">" + goal.progress.toFixed(1) + "%</p></div>" +
+            "<div class=\"progress-wrap\"><div class=\"progress-bar\" style=\"width:" + goal.progress + "%;\"></div></div>" +
+          "</div>" +
+          "<div class=\"budget-grid\" style=\"margin-top:14px;\">" +
+            "<div class=\"mini-card\"><h3 class=\"ok-text\">Extra Income Path</h3><p class=\"small muted\">Contribute about <strong>" + formatCurrency(goal.perDayNeeded) + "</strong> more per day for <strong>" + goal.daysLeft + "</strong> days.</p></div>" +
+            "<div class=\"mini-card\"><h3 style=\"color:#92400e;\">Reduced Spending Path</h3><p class=\"small muted\">Cut regular spending by about <strong>" + formatCurrency(goal.perDayNeeded) + "</strong> per day for <strong>" + goal.daysLeft + "</strong> days.</p></div>" +
+          "</div>" +
+          (goal.purchaseCoverageGap > 0 ? "<p class=\"danger-text\">Warning: this goal has " + formatCurrency(goal.purchaseCoverageGap) + " in purchases beyond the funded envelope.</p>" : "") +
+          "<div style=\"margin-top:12px;\"><span class=\"pill " + toneClass + "\">" + toneLabel + "</span></div>";
+        card.querySelector("[data-delete-goal]").addEventListener("click", function() {
+          const goalId = goal.id;
+          state.savingsGoals = state.savingsGoals.filter(function(item) { return item.id !== goalId; });
+          state.goalContributions = state.goalContributions.filter(function(item) { return item.goalId !== goalId; });
+          state.spendingEntries = state.spendingEntries.map(function(item) { return item.goalId === goalId ? { id: item.id, amount: item.amount, category: item.category, goalId: "", date: item.date, note: item.note } : item; });
+          saveState();
+          renderAll();
+        });
+        container.appendChild(card);
+      });
+    }
+
+    function renderRollover(analytics) {
+      const container = document.getElementById("rolloverContainer");
+      container.innerHTML = "";
+      if (analytics.monthlyRollover.length === 0) {
+        container.innerHTML = "<p class=\"muted small\">Add entries to see monthly rollover.</p>";
+        return;
+      }
+      analytics.monthlyRollover.forEach(function(month) {
+        const row = document.createElement("div");
+        row.className = "month-row";
+        row.innerHTML =
+          "<div class=\"subgrid-5\">" +
+            "<div><p class=\"eyebrow muted\">Month</p><p class=\"value\" style=\"font-size:1.05rem;\">" + escapeHtml(month.month) + "</p></div>" +
+            "<div><p class=\"eyebrow muted\">Income</p><p class=\"value\" style=\"font-size:1.05rem;\">" + formatCurrency(month.income) + "</p></div>" +
+            "<div><p class=\"eyebrow muted\">Regular Spend</p><p class=\"value\" style=\"font-size:1.05rem;\">" + formatCurrency(month.regularSpend) + "</p></div>" +
+            "<div><p class=\"eyebrow muted\">Goal Contributions</p><p class=\"value\" style=\"font-size:1.05rem;\">" + formatCurrency(month.contributions) + "</p></div>" +
+            "<div><p class=\"eyebrow muted\">Rollover Balance</p><p class=\"value\" style=\"font-size:1.05rem;\">" + formatCurrency(month.rolloverBalance) + "</p></div>" +
+          "</div>";
+        container.appendChild(row);
+      });
+    }
+
+    function renderBudgetLimits(analytics) {
+      const container = document.getElementById("budgetLimitsContainer");
+      container.innerHTML = "";
+      state.spendingCategories.forEach(function(category) {
+        const limit = (state.monthlyBudgets[state.activeMonth] || {})[category] || "";
+        const spent = analytics.monthlySpent[category] || 0;
+        const limitNumber = normalizeAmount(limit);
+        const pct = limit ? Math.min((spent / Math.max(limitNumber || 0, 0.01)) * 100, 100) : 0;
+        const row = document.createElement("div");
+        row.className = "budget-row";
+        row.innerHTML =
+          "<div class=\"budget-top\">" +
+            "<div>" +
+              "<h3>" + escapeHtml(category) + "</h3>" +
+              "<p class=\"small muted\">Spent: " + formatCurrency(spent) + "</p>" +
+            "</div>" +
+          "</div>" +
+          "<div class=\"inline-form\" style=\"margin-top:8px; align-items:center;\">" +
+            "<input type=\"number\" min=\"0\" step=\"0.01\" data-budget-category=\"" + escapeHtmlAttr(category) + "\" placeholder=\"Set monthly limit\" value=\"" + escapeHtmlAttr(limit) + "\">" +
+          "</div>" +
+          "<div class=\"progress-wrap\"><div class=\"progress-bar\" style=\"width:" + pct + "%;\"></div></div>";
+        row.querySelector("input").addEventListener("input", function(event) {
+          const amount = normalizeAmount(event.target.value);
+          state.monthlyBudgets[state.activeMonth] = state.monthlyBudgets[state.activeMonth] || {};
+          if (!event.target.value) delete state.monthlyBudgets[state.activeMonth][category];
+          else if (Number.isFinite(amount) && amount >= 0) state.monthlyBudgets[state.activeMonth][category] = String(amount);
+          saveState();
+          renderAll();
+        });
+        container.appendChild(row);
+      });
+    }
+
+    function renderEditor() {
+      const card = document.getElementById("editorCard");
+      const fields = document.getElementById("editorFields");
+      const title = document.getElementById("editorTitle");
+      fields.innerHTML = "";
+      setError("editorError", "");
+      if (!state.editor.type || !state.editor.id) {
+        card.classList.add("hidden");
+        return;
+      }
+      card.classList.remove("hidden");
+      let item = null;
+      if (state.editor.type === "income") item = state.incomeEntries.find(function(entry) { return entry.id === state.editor.id; });
+      if (state.editor.type === "spending") item = state.spendingEntries.find(function(entry) { return entry.id === state.editor.id; });
+      if (state.editor.type === "contribution") item = state.goalContributions.find(function(entry) { return entry.id === state.editor.id; });
+      if (!item) {
+        state.editor = { type: null, id: null };
+        card.classList.add("hidden");
+        return;
+      }
+      title.textContent = "Edit " + state.editor.type.charAt(0).toUpperCase() + state.editor.type.slice(1) + " Entry";
+      const html = [];
+      if (state.editor.type === "income" || state.editor.type === "spending") {
+        html.push("<div class=\"field\"><label>Amount</label><input id=\"editAmount\" type=\"number\" min=\"0\" step=\"0.01\" value=\"" + escapeHtmlAttr(item.amount) + "\"></div>");
+        html.push("<div class=\"field\"><label>Category</label><select id=\"editCategory\"></select></div>");
+      } else {
+        html.push("<div class=\"field\"><label>Savings Goal</label><select id=\"editGoalId\"></select></div>");
+        html.push("<div class=\"field\"><label>Amount</label><input id=\"editAmount\" type=\"number\" min=\"0\" step=\"0.01\" value=\"" + escapeHtmlAttr(item.amount) + "\"></div>");
+      }
+      if (state.editor.type === "spending") html.push("<div class=\"field\"><label>Linked Goal</label><select id=\"editLinkedGoal\"></select></div>");
+      html.push("<div class=\"field\"><label>Date</label><input id=\"editDate\" type=\"date\" value=\"" + escapeHtmlAttr(item.date) + "\"></div>");
+      html.push("<div class=\"field\"><label>Note</label><input id=\"editNote\" type=\"text\" value=\"" + escapeHtmlAttr(item.note || "") + "\"></div>");
+      fields.innerHTML = html.join("");
+      if (state.editor.type === "income") {
+        populateSelect(document.getElementById("editCategory"), state.incomeCategories.map(function(category) { return { value: category, label: category }; }), "Select category");
+        document.getElementById("editCategory").value = item.category;
+      }
+      if (state.editor.type === "spending") {
+        populateSelect(document.getElementById("editCategory"), state.spendingCategories.map(function(category) { return { value: category, label: category }; }), "Select category");
+        document.getElementById("editCategory").value = item.category;
+        populateSelect(document.getElementById("editLinkedGoal"), state.savingsGoals.map(function(goal) { return { value: goal.id, label: goal.name }; }), "No, regular spending", true);
+        document.getElementById("editLinkedGoal").value = item.goalId || "none";
+      }
+      if (state.editor.type === "contribution") {
+        populateSelect(document.getElementById("editGoalId"), state.savingsGoals.map(function(goal) { return { value: goal.id, label: goal.name }; }), "Select goal");
+        const select = document.getElementById("editGoalId");
+        if (Array.prototype.some.call(select.options, function(option) { return option.value === item.goalId; })) {
+          select.value = item.goalId;
+        }
+      }
+    }
+
+    function renderSelects() {
+      populateSelect(document.getElementById("incomeCategory"), state.incomeCategories.map(function(category) { return { value: category, label: category }; }), "Select category");
+      populateSelect(document.getElementById("spendingCategory"), state.spendingCategories.map(function(category) { return { value: category, label: category }; }), "Select category");
+      populateSelect(document.getElementById("spendingGoal"), state.savingsGoals.map(function(goal) { return { value: goal.id, label: goal.name }; }), "No, regular spending", true);
+      const contributionGoal = document.getElementById("contributionGoal");
+      if (state.savingsGoals.length === 0) {
+        contributionGoal.innerHTML = "<option value=\"none\">Create a goal first</option>";
+      } else {
+        populateSelect(contributionGoal, state.savingsGoals.map(function(goal) { return { value: goal.id, label: goal.name }; }), "Select goal", false);
+      }
+      document.getElementById("activeMonth").value = state.activeMonth;
+    }
+
+    function destroyCharts() {
+      Object.values(state.charts).forEach(function(chart) {
+        if (chart && typeof chart.destroy === "function") chart.destroy();
+      });
+      state.charts = {};
+    }
+
+    function renderCharts(analytics) {
+      if (typeof Chart === "undefined") return;
+      destroyCharts();
+      const goalsById = getGoalsById();
+      const charts = [
+        ["incomeChart", groupedData(state.incomeEntries, function(item) { return item.category; }), "doughnut"],
+        ["spendingChart", groupedData(state.spendingEntries.filter(function(item) { return !item.goalId; }), function(item) { return item.category; }), "doughnut"],
+        ["contributionChart", groupedData(state.goalContributions, function(item) { return goalsById[item.goalId] || "Deleted Goal"; }), "doughnut"],
+        ["goalPurchaseChart", groupedData(state.spendingEntries.filter(function(item) { return item.goalId; }), function(item) { return goalsById[item.goalId] || "Deleted Goal"; }), "doughnut"]
+      ];
+      charts.forEach(function(config) {
+        const id = config[0];
+        const data = config[1];
+        const type = config[2];
+        const canvas = document.getElementById(id);
+        if (!canvas) return;
+        const ctx = canvas.getContext("2d");
+        state.charts[id] = new Chart(ctx, {
+          type: type,
+          data: {
+            labels: data.length ? data.map(function(item) { return item.label; }) : ["No data"],
+            datasets: [{
+              data: data.length ? data.map(function(item) { return item.value; }) : [1],
+              backgroundColor: data.length ? data.map(function(_, index) { return CHART_COLORS[index % CHART_COLORS.length]; }) : ["#cbd5e1"],
+              borderWidth: 0,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: true, position: "bottom" },
+              tooltip: {
+                callbacks: {
+                  label: function(context) {
+                    return data.length ? context.label + ": " + formatCurrency(context.raw) : "No data";
+                  }
+                }
+              }
+            }
+          }
+        });
+      });
+      document.getElementById("budgetChartTitle").textContent = "Budget vs. Actual for " + state.activeMonth;
+      state.charts.budgetChart = new Chart(document.getElementById("budgetChart").getContext("2d"), {
+        type: "bar",
+        data: {
+          labels: analytics.budgetVsActualData.map(function(item) { return item.name; }),
+          datasets: [
+            { label: "Budget Limit", data: analytics.budgetVsActualData.map(function(item) { return item.limit; }), backgroundColor: "rgba(37,99,235,0.7)" },
+            { label: "Actual Spent", data: analytics.budgetVsActualData.map(function(item) { return item.spent; }), backgroundColor: "rgba(245,158,11,0.7)" }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: "bottom" } },
+          scales: { x: { ticks: { maxRotation: 45, minRotation: 0 } }, y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    function escapeHtml(str) {
+      return String(str).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+    }
+
+    function escapeHtmlAttr(str) {
+      return escapeHtml(str == null ? "" : str);
+    }
+
+    function readIncomeForm() {
       return {
-        month,
-        income,
-        regularSpend,
-        contributions,
-        monthNet,
-        rolloverBalance: running,
+        amount: normalizeAmount(document.getElementById("incomeAmount").value),
+        category: document.getElementById("incomeCategory").value,
+        date: document.getElementById("incomeDate").value,
+        note: safeString(document.getElementById("incomeNote").value)
       };
-    });
-  }, [incomeEntries, spendingEntries, goalContributions]);
-
-  const rolloverCurrent = monthlyRollover.length ? monthlyRollover[monthlyRollover.length - 1].rolloverBalance : 0;
-
-  const dashboardStatus = useMemo(() => {
-    const anyOff = goalAnalysis.some((goal) => goal.status === "off-pace" || goal.status === "late");
-    const anyClose = goalAnalysis.some((goal) => goal.status === "close");
-
-    if (freeCash < 0 || anyOff || budgetHealth === "bad") {
-      return { label: "Off Pace", tone: "red", detail: "Your budget, free cash, or sinking funds need attention." };
     }
-    if (anyClose || budgetHealth === "tight") {
-      return { label: "Cutting it Close", tone: "yellow", detail: "You can still make it, but your margin is thin." };
+
+    function readContributionForm() {
+      return {
+        goalId: document.getElementById("contributionGoal").value,
+        amount: normalizeAmount(document.getElementById("contributionAmount").value),
+        date: document.getElementById("contributionDate").value,
+        note: safeString(document.getElementById("contributionNote").value)
+      };
     }
-    return { label: "On Track", tone: "green", detail: "Your regular budget and sinking funds are pacing well." };
-  }, [goalAnalysis, freeCash, budgetHealth]);
 
-  const statusClasses = {
-    green: "border-green-200 bg-green-50 text-green-900",
-    yellow: "border-yellow-200 bg-yellow-50 text-yellow-900",
-    red: "border-red-200 bg-red-50 text-red-900",
-  };
+    function readSpendingForm() {
+      return {
+        amount: normalizeAmount(document.getElementById("spendingAmount").value),
+        category: document.getElementById("spendingCategory").value,
+        goalId: document.getElementById("spendingGoal").value,
+        date: document.getElementById("spendingDate").value,
+        note: safeString(document.getElementById("spendingNote").value)
+      };
+    }
 
-  const incomeChartData = useMemo(() => {
-    const grouped = incomeEntries.reduce((acc, entry) => {
-      acc[entry.category] = (acc[entry.category] || 0) + Number(entry.amount);
-      return acc;
-    }, {});
-    return Object.entries(grouped).map(([name, value]) => ({ name, value }));
-  }, [incomeEntries]);
+    function readGoalForm() {
+      return {
+        name: safeString(document.getElementById("goalName").value),
+        amount: normalizeAmount(document.getElementById("goalAmount").value),
+        currentSaved: normalizeAmount(document.getElementById("goalCurrentSaved").value || 0),
+        deadline: document.getElementById("goalDeadline").value
+      };
+    }
 
-  const spendingChartData = useMemo(() => {
-    const grouped = spendingEntries.filter((entry) => !entry.goalId).reduce((acc, entry) => {
-      acc[entry.category] = (acc[entry.category] || 0) + Number(entry.amount);
-      return acc;
-    }, {});
-    return Object.entries(grouped).map(([name, value]) => ({ name, value }));
-  }, [spendingEntries]);
+    function addIncome() {
+      clearErrors();
+      const form = readIncomeForm();
+      if (!Number.isFinite(form.amount) || form.amount <= 0) return setError("incomeError", "Enter a valid income amount.");
+      if (!form.category || state.incomeCategories.indexOf(form.category) === -1) return setError("incomeError", "Choose a valid income category.");
+      if (!isValidDate(form.date)) return setError("incomeError", "Choose a valid date.");
+      state.incomeEntries.push({ id: uid(), amount: form.amount, category: form.category, date: form.date, note: form.note });
+      document.getElementById("incomeAmount").value = "";
+      document.getElementById("incomeNote").value = "";
+      document.getElementById("incomeDate").value = todayISO();
+      saveState();
+      renderAll();
+    }
 
-  const contributionChartData = useMemo(() => {
-    const grouped = goalContributions.reduce((acc, entry) => {
-      const goalName = goalsById[entry.goalId] || "Deleted Goal";
-      acc[goalName] = (acc[goalName] || 0) + Number(entry.amount);
-      return acc;
-    }, {});
-    return Object.entries(grouped).map(([name, value]) => ({ name, value }));
-  }, [goalContributions, goalsById]);
+    function addContribution() {
+      clearErrors();
+      const form = readContributionForm();
+      if (!form.goalId || !state.savingsGoals.some(function(goal) { return goal.id === form.goalId; })) return setError("contributionError", "Choose an existing savings goal.");
+      if (!Number.isFinite(form.amount) || form.amount <= 0) return setError("contributionError", "Enter a valid contribution amount.");
+      if (!isValidDate(form.date)) return setError("contributionError", "Choose a valid date.");
+      state.goalContributions.push({ id: uid(), goalId: form.goalId, amount: form.amount, date: form.date, note: form.note });
+      document.getElementById("contributionAmount").value = "";
+      document.getElementById("contributionNote").value = "";
+      document.getElementById("contributionDate").value = todayISO();
+      saveState();
+      renderAll();
+    }
 
-  const goalPurchaseChartData = useMemo(() => {
-    const grouped = spendingEntries.filter((entry) => entry.goalId).reduce((acc, entry) => {
-      const goalName = goalsById[entry.goalId] || "Deleted Goal";
-      acc[goalName] = (acc[goalName] || 0) + Number(entry.amount);
-      return acc;
-    }, {});
-    return Object.entries(grouped).map(([name, value]) => ({ name, value }));
-  }, [spendingEntries, goalsById]);
+    function addSpending() {
+      clearErrors();
+      const form = readSpendingForm();
+      if (!Number.isFinite(form.amount) || form.amount <= 0) return setError("spendingError", "Enter a valid spending amount.");
+      if (!form.category || state.spendingCategories.indexOf(form.category) === -1) return setError("spendingError", "Choose a valid spending category.");
+      if (!isValidDate(form.date)) return setError("spendingError", "Choose a valid date.");
+      const normalizedGoalId = form.goalId && form.goalId !== "none" ? form.goalId : "";
+      if (normalizedGoalId && !state.savingsGoals.some(function(goal) { return goal.id === normalizedGoalId; })) return setError("spendingError", "Choose a valid goal envelope or regular spending.");
+      state.spendingEntries.push({ id: uid(), amount: form.amount, category: form.category, goalId: normalizedGoalId, date: form.date, note: form.note });
+      document.getElementById("spendingAmount").value = "";
+      document.getElementById("spendingNote").value = "";
+      document.getElementById("spendingDate").value = todayISO();
+      document.getElementById("spendingGoal").value = "none";
+      saveState();
+      renderAll();
+    }
 
-  const resetIncomeForm = () => setIncomeForm({ amount: "", category: incomeCategories[0] || "", date: todayISO(), note: "" });
-  const resetSpendingForm = () => setSpendingForm({ amount: "", category: spendingCategories[0] || "", date: todayISO(), note: "", goalId: "none" });
-  const resetGoalForm = () => setGoalForm({ name: "", amount: "", currentSaved: "", deadline: "" });
-  const resetContributionForm = () => setContributionForm({ goalId: savingsGoals[0]?.id || "none", amount: "", date: todayISO(), note: "" });
+    function addGoal() {
+      clearErrors();
+      const form = readGoalForm();
+      if (!form.name) return setError("goalError", "Enter a goal name.");
+      if (!Number.isFinite(form.amount) || form.amount <= 0) return setError("goalError", "Enter a valid target amount.");
+      if (!Number.isFinite(form.currentSaved) || form.currentSaved < 0) return setError("goalError", "Enter a valid starting envelope balance.");
+      if (!isValidDate(form.deadline)) return setError("goalError", "Choose a valid deadline.");
+      state.savingsGoals.push({ id: uid(), name: form.name, amount: form.amount, currentSaved: form.currentSaved, deadline: form.deadline });
+      document.getElementById("goalName").value = "";
+      document.getElementById("goalAmount").value = "";
+      document.getElementById("goalCurrentSaved").value = "";
+      document.getElementById("goalDeadline").value = "";
+      saveState();
+      renderAll();
+    }
 
-  const addIncome = () => {
-    if (!incomeForm.amount || Number(incomeForm.amount) <= 0 || !incomeForm.category) return;
-    setIncomeEntries((prev) => [...prev, { id: uid(), ...incomeForm, amount: Number(incomeForm.amount) }]);
-    resetIncomeForm();
-  };
+    function deleteEntry(type, id) {
+      if (type === "income") state.incomeEntries = state.incomeEntries.filter(function(item) { return item.id !== id; });
+      if (type === "spending") state.spendingEntries = state.spendingEntries.filter(function(item) { return item.id !== id; });
+      if (type === "contribution") state.goalContributions = state.goalContributions.filter(function(item) { return item.id !== id; });
+      if (state.editor.id === id && state.editor.type === type) state.editor = { type: null, id: null };
+      saveState();
+      renderAll();
+    }
 
-  const addSpending = () => {
-    if (!spendingForm.amount || Number(spendingForm.amount) <= 0 || !spendingForm.category) return;
-    setSpendingEntries((prev) => [
-      ...prev,
-      {
-        id: uid(),
-        ...spendingForm,
-        goalId: spendingForm.goalId === "none" ? "" : spendingForm.goalId,
-        amount: Number(spendingForm.amount),
-      },
-    ]);
-    resetSpendingForm();
-  };
+    function startEdit(type, id) {
+      state.editor = { type: type, id: id };
+      renderEditor();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
 
-  const addGoal = () => {
-    if (!goalForm.name || !goalForm.amount || !goalForm.deadline) return;
-    setSavingsGoals((prev) => [
-      ...prev,
-      {
-        id: uid(),
-        name: goalForm.name,
-        amount: Number(goalForm.amount),
-        currentSaved: Number(goalForm.currentSaved || 0),
-        deadline: goalForm.deadline,
-      },
-    ]);
-    resetGoalForm();
-  };
+    function cancelEdit() {
+      state.editor = { type: null, id: null };
+      renderEditor();
+    }
 
-  const addContribution = () => {
-    if (!contributionForm.goalId || contributionForm.goalId === "none" || !contributionForm.amount || Number(contributionForm.amount) <= 0) return;
-    setGoalContributions((prev) => [...prev, { id: uid(), ...contributionForm, amount: Number(contributionForm.amount) }]);
-    resetContributionForm();
-  };
+    function saveEdit() {
+      setError("editorError", "");
+      if (!state.editor.type || !state.editor.id) return;
+      if (state.editor.type === "income") {
+        const amount = normalizeAmount(document.getElementById("editAmount").value);
+        const category = document.getElementById("editCategory").value;
+        const date = document.getElementById("editDate").value;
+        const note = safeString(document.getElementById("editNote").value);
+        if (!Number.isFinite(amount) || amount <= 0) return setError("editorError", "Enter a valid income amount.");
+        if (state.incomeCategories.indexOf(category) === -1) return setError("editorError", "Choose a valid income category.");
+        if (!isValidDate(date)) return setError("editorError", "Choose a valid date.");
+        state.incomeEntries = state.incomeEntries.map(function(item) {
+          return item.id === state.editor.id ? { id: item.id, amount: amount, category: category, date: date, note: note } : item;
+        });
+      }
+      if (state.editor.type === "spending") {
+        const amount = normalizeAmount(document.getElementById("editAmount").value);
+        const category = document.getElementById("editCategory").value;
+        const linkedGoal = document.getElementById("editLinkedGoal").value;
+        const goalId = linkedGoal === "none" ? "" : linkedGoal;
+        const date = document.getElementById("editDate").value;
+        const note = safeString(document.getElementById("editNote").value);
+        if (!Number.isFinite(amount) || amount <= 0) return setError("editorError", "Enter a valid spending amount.");
+        if (state.spendingCategories.indexOf(category) === -1) return setError("editorError", "Choose a valid spending category.");
+        if (goalId && !state.savingsGoals.some(function(goal) { return goal.id === goalId; })) return setError("editorError", "Choose a valid linked goal.");
+        if (!isValidDate(date)) return setError("editorError", "Choose a valid date.");
+        state.spendingEntries = state.spendingEntries.map(function(item) {
+          return item.id === state.editor.id ? { id: item.id, amount: amount, category: category, goalId: goalId, date: date, note: note } : item;
+        });
+      }
+      if (state.editor.type === "contribution") {
+        const goalId = document.getElementById("editGoalId").value;
+        const amount = normalizeAmount(document.getElementById("editAmount").value);
+        const date = document.getElementById("editDate").value;
+        const note = safeString(document.getElementById("editNote").value);
+        if (!state.savingsGoals.some(function(goal) { return goal.id === goalId; })) return setError("editorError", "Choose a valid savings goal.");
+        if (!Number.isFinite(amount) || amount <= 0) return setError("editorError", "Enter a valid contribution amount.");
+        if (!isValidDate(date)) return setError("editorError", "Choose a valid date.");
+        state.goalContributions = state.goalContributions.map(function(item) {
+          return item.id === state.editor.id ? { id: item.id, goalId: goalId, amount: amount, date: date, note: note } : item;
+        });
+      }
+      state.editor = { type: null, id: null };
+      saveState();
+      renderAll();
+    }
 
-  const startEditIncome = (id) => {
-    const item = incomeEntries.find((entry) => entry.id === id);
-    if (!item) return;
-    setEditingIncomeId(id);
-    setIncomeEditForm({ amount: String(item.amount), category: item.category, date: item.date, note: item.note || "" });
-  };
+    function removeCategory(type, category) {
+      if (type === "income") {
+        if (state.incomeCategories.length === 1) return;
+        if (state.incomeEntries.some(function(item) { return item.category === category; })) return;
+        state.incomeCategories = state.incomeCategories.filter(function(item) { return item !== category; });
+      }
+      if (type === "spending") {
+        if (state.spendingCategories.length === 1) return;
+        if (state.spendingEntries.some(function(item) { return item.category === category; })) return;
+        if (Object.values(state.monthlyBudgets).some(function(month) { return month && Object.prototype.hasOwnProperty.call(month, category); })) return;
+        state.spendingCategories = state.spendingCategories.filter(function(item) { return item !== category; });
+      }
+      saveState();
+      renderAll();
+    }
 
-  const startEditSpending = (id) => {
-    const item = spendingEntries.find((entry) => entry.id === id);
-    if (!item) return;
-    setEditingSpendingId(id);
-    setSpendingEditForm({ amount: String(item.amount), category: item.category, date: item.date, note: item.note || "", goalId: item.goalId || "none" });
-  };
+    function addCategory(type) {
+      const input = document.getElementById(type === "income" ? "newIncomeCategory" : "newSpendingCategory");
+      const value = safeString(input.value);
+      if (!value) return;
+      if (type === "income") {
+        if (state.incomeCategories.indexOf(value) === -1) state.incomeCategories.push(value);
+      } else {
+        if (state.spendingCategories.indexOf(value) === -1) state.spendingCategories.push(value);
+      }
+      input.value = "";
+      saveState();
+      renderAll();
+    }
 
-  const startEditContribution = (id) => {
-    const item = goalContributions.find((entry) => entry.id === id);
-    if (!item) return;
-    setEditingContributionId(id);
-    setContributionEditForm({ amount: String(item.amount), date: item.date, note: item.note || "", goalId: item.goalId || "none" });
-  };
+    function exportJsonBackup() {
+      const payload = {
+        incomeCategories: state.incomeCategories,
+        spendingCategories: state.spendingCategories,
+        incomeEntries: state.incomeEntries,
+        spendingEntries: state.spendingEntries,
+        goalContributions: state.goalContributions,
+        savingsGoals: state.savingsGoals,
+        monthlyBudgets: state.monthlyBudgets,
+        activeMonth: state.activeMonth,
+        exportedAt: new Date().toISOString(),
+        version: 2
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "budget-backup-" + new Date().toISOString().slice(0, 10) + ".json";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
 
-  const saveIncomeEdit = () => {
-    if (!incomeEditForm.amount || Number(incomeEditForm.amount) <= 0) return;
-    setIncomeEntries((prev) => prev.map((entry) => (entry.id === editingIncomeId ? { ...entry, ...incomeEditForm, amount: Number(incomeEditForm.amount) } : entry)));
-    setEditingIncomeId("");
-  };
+    function importJsonBackup(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function() {
+        try {
+          const parsed = JSON.parse(String(reader.result || "{}"));
+          if (!window.confirm("Importing this backup will replace all current data in the app. Continue?")) return;
+          applyImportedState(parsed);
+          saveState();
+          renderAll();
+          alert("Backup imported. Current app data was replaced successfully.");
+        } catch (error) {
+          console.error("Import failed", error);
+          alert("That file could not be imported. Please choose a valid JSON backup file.");
+        }
+      };
+      reader.readAsText(file);
+    }
 
-  const saveSpendingEdit = () => {
-    if (!spendingEditForm.amount || Number(spendingEditForm.amount) <= 0) return;
-    setSpendingEntries((prev) =>
-      prev.map((entry) =>
-        entry.id === editingSpendingId
-          ? { ...entry, ...spendingEditForm, goalId: spendingEditForm.goalId === "none" ? "" : spendingEditForm.goalId, amount: Number(spendingEditForm.amount) }
-          : entry
-      )
-    );
-    setEditingSpendingId("");
-  };
+    function wireStaticEvents() {
+      document.getElementById("addIncomeBtn").addEventListener("click", addIncome);
+      document.getElementById("addContributionBtn").addEventListener("click", addContribution);
+      document.getElementById("addSpendingBtn").addEventListener("click", addSpending);
+      document.getElementById("addGoalBtn").addEventListener("click", addGoal);
+      document.getElementById("saveEditBtn").addEventListener("click", saveEdit);
+      document.getElementById("cancelEditBtn").addEventListener("click", cancelEdit);
+      document.getElementById("addIncomeCategoryBtn").addEventListener("click", function() { addCategory("income"); });
+      document.getElementById("addSpendingCategoryBtn").addEventListener("click", function() { addCategory("spending"); });
+      document.getElementById("exportJsonBtn").addEventListener("click", exportJsonBackup);
+      document.getElementById("importJsonInput").addEventListener("change", function(event) {
+        const file = event.target.files && event.target.files[0];
+        importJsonBackup(file);
+        event.target.value = "";
+      });
+      document.getElementById("activeMonth").addEventListener("input", function(event) {
+        if (!/^\d{4}-\d{2}$/.test(event.target.value)) return;
+        state.activeMonth = event.target.value;
+        saveState();
+        renderAll();
+      });
+      ["newIncomeCategory", "newSpendingCategory"].forEach(function(id) {
+        document.getElementById(id).addEventListener("keydown", function(event) {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            addCategory(id === "newIncomeCategory" ? "income" : "spending");
+          }
+        });
+      });
+    }
 
-  const saveContributionEdit = () => {
-    if (!contributionEditForm.amount || Number(contributionEditForm.amount) <= 0 || contributionEditForm.goalId === "none") return;
-    setGoalContributions((prev) => prev.map((entry) => (entry.id === editingContributionId ? { ...entry, ...contributionEditForm, amount: Number(contributionEditForm.amount) } : entry)));
-    setEditingContributionId("");
-  };
+    function renderAll() {
+      clearErrors();
+      const analytics = getAnalytics();
+      renderStatus(analytics);
+      renderSummary(analytics);
+      renderSelects();
+      renderEntryList("incomeList", state.incomeEntries, "income");
+      renderEntryList("spendingList", state.spendingEntries, "spending");
+      renderEntryList("contributionList", state.goalContributions, "contribution");
+      renderGoals(analytics);
+      renderRollover(analytics);
+      renderBudgetLimits(analytics);
+      renderCategoryPills("incomeCategoryPills", state.incomeCategories, function(category) { removeCategory("income", category); });
+      renderCategoryPills("spendingCategoryPills", state.spendingCategories, function(category) { removeCategory("spending", category); });
+      renderEditor();
+      renderCharts(analytics);
+    }
 
-  const contributionList = goalContributions.slice().reverse();
+    function initDefaults() {
+      document.getElementById("incomeDate").value = todayISO();
+      document.getElementById("contributionDate").value = todayISO();
+      document.getElementById("spendingDate").value = todayISO();
+      document.getElementById("activeMonth").value = state.activeMonth;
+    }
 
-  return (
-    <div className="min-h-screen bg-slate-50 p-3 sm:p-4 md:p-6">
-      <div className="mx-auto max-w-7xl space-y-5 sm:space-y-6">
-        <div className={`rounded-3xl border px-4 py-4 shadow-sm sm:px-6 sm:py-5 ${statusClasses[dashboardStatus.tone]}`}>
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide sm:text-sm">Budget Status</p>
-              <h1 className="text-2xl font-bold sm:text-3xl">{dashboardStatus.label}</h1>
-              <p className="mt-1 text-sm">{dashboardStatus.detail}</p>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-              <div className="rounded-2xl bg-white/70 px-4 py-3">
-                <p className="text-xs uppercase tracking-wide text-slate-600">Total Income</p>
-                <p className="text-lg font-semibold sm:text-xl">{formatCurrency(totalIncome)}</p>
-              </div>
-              <div className="rounded-2xl bg-white/70 px-4 py-3">
-                <p className="text-xs uppercase tracking-wide text-slate-600">Regular Spending</p>
-                <p className="text-lg font-semibold sm:text-xl">{formatCurrency(regularSpendingTotal)}</p>
-              </div>
-              <div className="rounded-2xl bg-white/70 px-4 py-3">
-                <p className="text-xs uppercase tracking-wide text-slate-600">Goal Contributions</p>
-                <p className="text-lg font-semibold sm:text-xl">{formatCurrency(totalGoalContributions)}</p>
-              </div>
-              <div className="rounded-2xl bg-white/70 px-4 py-3">
-                <p className="text-xs uppercase tracking-wide text-slate-600">Goal Envelope Total</p>
-                <p className="text-lg font-semibold sm:text-xl">{formatCurrency(totalEnvelopeBalances)}</p>
-              </div>
-              <div className="rounded-2xl bg-white/70 px-4 py-3">
-                <p className="text-xs uppercase tracking-wide text-slate-600">Free Cash</p>
-                <p className="text-lg font-semibold sm:text-xl">{formatCurrency(freeCash)}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid gap-5 xl:grid-cols-4">
-          <Card className="rounded-2xl shadow-sm">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base sm:text-lg"><TrendingUp className="h-5 w-5" /> Add Income</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2"><Label>Amount</Label><Input type="number" min="0" step="0.01" value={incomeForm.amount} onChange={(e) => setIncomeForm({ ...incomeForm, amount: e.target.value })} placeholder="0.00" /></div>
-              <div className="space-y-2"><Label>Category</Label><Select value={incomeForm.category} onValueChange={(value) => setIncomeForm({ ...incomeForm, category: value })}><SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger><SelectContent>{incomeCategories.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}</SelectContent></Select></div>
-              <div className="space-y-2"><Label>Date</Label><Input type="date" value={incomeForm.date} onChange={(e) => setIncomeForm({ ...incomeForm, date: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Note</Label><Input value={incomeForm.note} onChange={(e) => setIncomeForm({ ...incomeForm, note: e.target.value })} placeholder="Optional" /></div>
-              <Button onClick={addIncome} className="w-full rounded-xl">Deposit Income</Button>
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-2xl shadow-sm">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base sm:text-lg"><Landmark className="h-5 w-5" /> Contribute to Goal</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2"><Label>Savings Goal</Label><Select value={contributionForm.goalId} onValueChange={(value) => setContributionForm({ ...contributionForm, goalId: value })}><SelectTrigger><SelectValue placeholder="Select goal" /></SelectTrigger><SelectContent>{savingsGoals.length === 0 ? <SelectItem value="none">Create a goal first</SelectItem> : savingsGoals.map((goal) => <SelectItem key={goal.id} value={goal.id}>{goal.name}</SelectItem>)}</SelectContent></Select></div>
-              <div className="space-y-2"><Label>Amount</Label><Input type="number" min="0" step="0.01" value={contributionForm.amount} onChange={(e) => setContributionForm({ ...contributionForm, amount: e.target.value })} placeholder="0.00" /></div>
-              <div className="space-y-2"><Label>Date</Label><Input type="date" value={contributionForm.date} onChange={(e) => setContributionForm({ ...contributionForm, date: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Note</Label><Input value={contributionForm.note} onChange={(e) => setContributionForm({ ...contributionForm, note: e.target.value })} placeholder="Optional" /></div>
-              <Button onClick={addContribution} className="w-full rounded-xl">Add Contribution</Button>
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-2xl shadow-sm">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base sm:text-lg"><TrendingDown className="h-5 w-5" /> Add Spending</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2"><Label>Amount</Label><Input type="number" min="0" step="0.01" value={spendingForm.amount} onChange={(e) => setSpendingForm({ ...spendingForm, amount: e.target.value })} placeholder="0.00" /></div>
-              <div className="space-y-2"><Label>Category</Label><Select value={spendingForm.category} onValueChange={(value) => setSpendingForm({ ...spendingForm, category: value })}><SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger><SelectContent>{spendingCategories.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}</SelectContent></Select></div>
-              <div className="space-y-2"><Label>Pay using a goal envelope?</Label><Select value={spendingForm.goalId} onValueChange={(value) => setSpendingForm({ ...spendingForm, goalId: value })}><SelectTrigger><SelectValue placeholder="No goal linked" /></SelectTrigger><SelectContent><SelectItem value="none">No, regular spending</SelectItem>{savingsGoals.map((goal) => <SelectItem key={goal.id} value={goal.id}>{goal.name}</SelectItem>)}</SelectContent></Select></div>
-              <div className="space-y-2"><Label>Date</Label><Input type="date" value={spendingForm.date} onChange={(e) => setSpendingForm({ ...spendingForm, date: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Note</Label><Input value={spendingForm.note} onChange={(e) => setSpendingForm({ ...spendingForm, note: e.target.value })} placeholder="Optional" /></div>
-              <Button onClick={addSpending} className="w-full rounded-xl">Add Expense</Button>
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-2xl shadow-sm">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base sm:text-lg"><Target className="h-5 w-5" /> Add Savings Goal</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2"><Label>Goal Name</Label><Input value={goalForm.name} onChange={(e) => setGoalForm({ ...goalForm, name: e.target.value })} placeholder="Flight, emergency fund, deposit" /></div>
-              <div className="space-y-2"><Label>Target Amount</Label><Input type="number" min="0" step="0.01" value={goalForm.amount} onChange={(e) => setGoalForm({ ...goalForm, amount: e.target.value })} placeholder="0.00" /></div>
-              <div className="space-y-2"><Label>Starting Envelope Balance</Label><Input type="number" min="0" step="0.01" value={goalForm.currentSaved} onChange={(e) => setGoalForm({ ...goalForm, currentSaved: e.target.value })} placeholder="0.00" /></div>
-              <div className="space-y-2"><Label>Deadline</Label><Input type="date" value={goalForm.deadline} onChange={(e) => setGoalForm({ ...goalForm, deadline: e.target.value })} /></div>
-              <Button onClick={addGoal} className="w-full rounded-xl">Create Goal</Button>
-            </CardContent>
-          </Card>
-        </div>
-
-        {editingIncomeId ? (
-          <EntryEditor
-            title="Edit Income Entry"
-            fields={<>
-              <div className="space-y-2"><Label>Amount</Label><Input type="number" min="0" step="0.01" value={incomeEditForm.amount} onChange={(e) => setIncomeEditForm({ ...incomeEditForm, amount: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Category</Label><Select value={incomeEditForm.category} onValueChange={(value) => setIncomeEditForm({ ...incomeEditForm, category: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{incomeCategories.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}</SelectContent></Select></div>
-              <div className="space-y-2"><Label>Date</Label><Input type="date" value={incomeEditForm.date} onChange={(e) => setIncomeEditForm({ ...incomeEditForm, date: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Note</Label><Input value={incomeEditForm.note} onChange={(e) => setIncomeEditForm({ ...incomeEditForm, note: e.target.value })} /></div>
-            </>}
-            onSave={saveIncomeEdit}
-            onCancel={() => setEditingIncomeId("")}
-            saveLabel="Save Income Changes"
-          />
-        ) : null}
-
-        {editingSpendingId ? (
-          <EntryEditor
-            title="Edit Spending Entry"
-            fields={<>
-              <div className="space-y-2"><Label>Amount</Label><Input type="number" min="0" step="0.01" value={spendingEditForm.amount} onChange={(e) => setSpendingEditForm({ ...spendingEditForm, amount: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Category</Label><Select value={spendingEditForm.category} onValueChange={(value) => setSpendingEditForm({ ...spendingEditForm, category: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{spendingCategories.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}</SelectContent></Select></div>
-              <div className="space-y-2"><Label>Linked Goal</Label><Select value={spendingEditForm.goalId} onValueChange={(value) => setSpendingEditForm({ ...spendingEditForm, goalId: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">No, regular spending</SelectItem>{savingsGoals.map((goal) => <SelectItem key={goal.id} value={goal.id}>{goal.name}</SelectItem>)}</SelectContent></Select></div>
-              <div className="space-y-2"><Label>Date</Label><Input type="date" value={spendingEditForm.date} onChange={(e) => setSpendingEditForm({ ...spendingEditForm, date: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Note</Label><Input value={spendingEditForm.note} onChange={(e) => setSpendingEditForm({ ...spendingEditForm, note: e.target.value })} /></div>
-            </>}
-            onSave={saveSpendingEdit}
-            onCancel={() => setEditingSpendingId("")}
-            saveLabel="Save Spending Changes"
-          />
-        ) : null}
-
-        {editingContributionId ? (
-          <EntryEditor
-            title="Edit Goal Contribution"
-            fields={<>
-              <div className="space-y-2"><Label>Savings Goal</Label><Select value={contributionEditForm.goalId} onValueChange={(value) => setContributionEditForm({ ...contributionEditForm, goalId: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{savingsGoals.map((goal) => <SelectItem key={goal.id} value={goal.id}>{goal.name}</SelectItem>)}</SelectContent></Select></div>
-              <div className="space-y-2"><Label>Amount</Label><Input type="number" min="0" step="0.01" value={contributionEditForm.amount} onChange={(e) => setContributionEditForm({ ...contributionEditForm, amount: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Date</Label><Input type="date" value={contributionEditForm.date} onChange={(e) => setContributionEditForm({ ...contributionEditForm, date: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Note</Label><Input value={contributionEditForm.note} onChange={(e) => setContributionEditForm({ ...contributionEditForm, note: e.target.value })} /></div>
-            </>}
-            onSave={saveContributionEdit}
-            onCancel={() => setEditingContributionId("")}
-            saveLabel="Save Contribution Changes"
-          />
-        ) : null}
-
-        <Tabs defaultValue="dashboard" className="space-y-5">
-          <TabsList className="grid w-full grid-cols-2 gap-2 rounded-2xl sm:grid-cols-6">
-            <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-            <TabsTrigger value="charts">Charts</TabsTrigger>
-            <TabsTrigger value="goals">Goals</TabsTrigger>
-            <TabsTrigger value="rollover">Rollover</TabsTrigger>
-            <TabsTrigger value="budgets">Budgets</TabsTrigger>
-            <TabsTrigger value="categories">Categories</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="dashboard" className="space-y-5">
-            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-5">
-              <Card className="rounded-2xl shadow-sm"><CardContent className="flex items-center gap-4 p-5"><div className="rounded-2xl bg-blue-100 p-3"><Wallet className="h-6 w-6 text-blue-700" /></div><div><p className="text-sm text-slate-500">Net Cash Position</p><p className="text-2xl font-bold">{formatCurrency(totalIncome - regularSpendingTotal - totalGoalContributions)}</p></div></CardContent></Card>
-              <Card className="rounded-2xl shadow-sm"><CardContent className="flex items-center gap-4 p-5"><div className="rounded-2xl bg-green-100 p-3"><PiggyBank className="h-6 w-6 text-green-700" /></div><div><p className="text-sm text-slate-500">Goal Envelopes</p><p className="text-2xl font-bold">{formatCurrency(totalEnvelopeBalances)}</p></div></CardContent></Card>
-              <Card className="rounded-2xl shadow-sm"><CardContent className="flex items-center gap-4 p-5"><div className="rounded-2xl bg-amber-100 p-3"><Receipt className="h-6 w-6 text-amber-700" /></div><div><p className="text-sm text-slate-500">Monthly Budget Spend</p><p className="text-2xl font-bold">{formatCurrency(totalBudgetSpent)}</p></div></CardContent></Card>
-              <Card className="rounded-2xl shadow-sm"><CardContent className="flex items-center gap-4 p-5"><div className="rounded-2xl bg-purple-100 p-3"><ShieldCheck className="h-6 w-6 text-purple-700" /></div><div><p className="text-sm text-slate-500">Rollover Balance</p><p className="text-2xl font-bold">{formatCurrency(rolloverCurrent)}</p></div></CardContent></Card>
-              <Card className="rounded-2xl shadow-sm"><CardContent className="flex items-center gap-4 p-5"><div className="rounded-2xl bg-emerald-100 p-3"><Target className="h-6 w-6 text-emerald-700" /></div><div><p className="text-sm text-slate-500">Goal Starts</p><p className="text-2xl font-bold">{formatCurrency(totalStartingGoalBalances)}</p></div></CardContent></Card>
-            </div>
-
-            <div className="grid gap-5 xl:grid-cols-3">
-              <TransactionList title="Recent Income" items={incomeEntries} onDelete={(id) => setIncomeEntries(incomeEntries.filter((entry) => entry.id !== id))} onEdit={startEditIncome} type="income" goalsById={goalsById} />
-              <TransactionList title="Recent Spending" items={spendingEntries} onDelete={(id) => setSpendingEntries(spendingEntries.filter((entry) => entry.id !== id))} onEdit={startEditSpending} type="spending" goalsById={goalsById} />
-              <TransactionList title="Goal Contributions" items={contributionList} onDelete={(id) => setGoalContributions(goalContributions.filter((entry) => entry.id !== id))} onEdit={startEditContribution} type="contribution" goalsById={goalsById} />
-            </div>
-          </TabsContent>
-
-          <TabsContent value="charts" className="space-y-5">
-            <div className="grid gap-5 xl:grid-cols-2">
-              <DoughnutCard title="Income by Source" data={incomeChartData} emptyLabel="Add income to see source breakdown." />
-              <DoughnutCard title="Regular Spending by Category" data={spendingChartData} emptyLabel="Add regular spending to see category breakdown." />
-            </div>
-            <div className="grid gap-5 xl:grid-cols-2">
-              <DoughnutCard title="Goal Contributions by Savings Goal" data={contributionChartData} emptyLabel="Add goal contributions to see sinking-fund buildup." />
-              <DoughnutCard title="Goal Purchases by Savings Goal" data={goalPurchaseChartData} emptyLabel="Pay for something using a goal envelope to see it here." />
-            </div>
-            <Card className="rounded-2xl shadow-sm">
-              <CardHeader><CardTitle className="text-base sm:text-lg">Budget vs. Actual for {activeMonth}</CardTitle></CardHeader>
-              <CardContent>
-                <div className="h-[300px] sm:h-[360px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={budgetVsActualData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="name" hide={compactCharts} />
-                      <YAxis />
-                      <Tooltip content={<CustomTooltip />} />
-                      <Legend />
-                      <Bar dataKey="limit" name="Budget Limit" />
-                      <Bar dataKey="spent" name="Actual Spent" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="goals" className="space-y-5">
-            {goalAnalysis.length === 0 ? (
-              <Card className="rounded-2xl shadow-sm"><CardContent className="p-8 text-center text-slate-500">No savings goals yet. Add one above to start a sinking fund.</CardContent></Card>
-            ) : (
-              <div className="grid gap-5 xl:grid-cols-2">
-                {goalAnalysis.map((goal) => (
-                  <Card key={goal.id} className="rounded-2xl shadow-sm">
-                    <CardHeader className="flex flex-row items-start justify-between gap-4">
-                      <div>
-                        <CardTitle className="text-base sm:text-lg">{goal.name}</CardTitle>
-                        <p className="mt-1 text-sm text-slate-500">Deadline: {goal.deadline}</p>
-                      </div>
-                      <Button variant="ghost" size="icon" onClick={() => setSavingsGoals(savingsGoals.filter((item) => item.id !== goal.id))}><Trash2 className="h-4 w-4" /></Button>
-                    </CardHeader>
-                    <CardContent className="space-y-5">
-                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                        <div className="rounded-2xl bg-slate-100 p-4"><p className="text-xs uppercase tracking-wide text-slate-500">Target</p><p className="text-lg font-semibold">{formatCurrency(goal.amount)}</p></div>
-                        <div className="rounded-2xl bg-slate-100 p-4"><p className="text-xs uppercase tracking-wide text-slate-500">Contributions</p><p className="text-lg font-semibold">{formatCurrency(goal.contributions + goal.currentSaved)}</p></div>
-                        <div className="rounded-2xl bg-slate-100 p-4"><p className="text-xs uppercase tracking-wide text-slate-500">Purchases</p><p className="text-lg font-semibold">{formatCurrency(goal.purchases)}</p></div>
-                        <div className="rounded-2xl bg-slate-100 p-4"><p className="text-xs uppercase tracking-wide text-slate-500">Envelope Balance</p><p className="text-lg font-semibold">{formatCurrency(goal.envelopeBalance)}</p></div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between text-sm"><span>Saved Toward Target</span><span>{goal.progress.toFixed(1)}%</span></div>
-                        <Progress value={goal.progress} className="h-3" />
-                      </div>
-
-                      <div className="rounded-2xl border border-slate-200 p-4">
-                        <p className="font-medium text-slate-900">Sinking Fund Plan</p>
-                        <div className="mt-3 grid gap-3 md:grid-cols-2">
-                          <div className="rounded-2xl bg-green-50 p-4">
-                            <p className="text-sm font-medium text-green-900">Extra Income Path</p>
-                            <p className="mt-1 text-sm text-green-800">Contribute about <span className="font-semibold">{formatCurrency(goal.perDayNeeded)}</span> more per day for <span className="font-semibold">{goal.daysLeft}</span> days.</p>
-                          </div>
-                          <div className="rounded-2xl bg-amber-50 p-4">
-                            <p className="text-sm font-medium text-amber-900">Reduced Spending Path</p>
-                            <p className="mt-1 text-sm text-amber-800">Cut regular spending by about <span className="font-semibold">{formatCurrency(goal.perDayNeeded)}</span> per day for <span className="font-semibold">{goal.daysLeft}</span> days.</p>
-                          </div>
-                        </div>
-                        {goal.purchaseCoverageGap > 0 ? <p className="mt-3 text-sm font-medium text-red-700">Warning: this goal has {formatCurrency(goal.purchaseCoverageGap)} in purchases beyond the funded envelope.</p> : null}
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        {goal.status === "met" && <Badge className="rounded-full bg-green-600">Funded</Badge>}
-                        {goal.status === "on-track" && <Badge className="rounded-full bg-green-600">On Track</Badge>}
-                        {goal.status === "close" && <Badge className="rounded-full bg-yellow-500 text-black">Cutting it Close</Badge>}
-                        {goal.status === "off-pace" && <Badge className="rounded-full bg-red-600">Off Pace</Badge>}
-                        {goal.status === "late" && <Badge className="rounded-full bg-red-700">Needs Attention</Badge>}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="rollover" className="space-y-5">
-            <Card className="rounded-2xl shadow-sm">
-              <CardHeader><CardTitle className="text-base sm:text-lg">Monthly Rollover Savings Tracking</CardTitle></CardHeader>
-              <CardContent className="space-y-4">
-                {monthlyRollover.length === 0 ? (
-                  <p className="text-sm text-slate-500">Add entries to see monthly rollover.</p>
-                ) : (
-                  <div className="space-y-3">
-                    {monthlyRollover.map((month) => (
-                      <div key={month.month} className="rounded-2xl border border-slate-200 p-4">
-                        <div className="grid gap-3 sm:grid-cols-5">
-                          <div><p className="text-xs uppercase tracking-wide text-slate-500">Month</p><p className="font-semibold">{month.month}</p></div>
-                          <div><p className="text-xs uppercase tracking-wide text-slate-500">Income</p><p className="font-semibold">{formatCurrency(month.income)}</p></div>
-                          <div><p className="text-xs uppercase tracking-wide text-slate-500">Regular Spend</p><p className="font-semibold">{formatCurrency(month.regularSpend)}</p></div>
-                          <div><p className="text-xs uppercase tracking-wide text-slate-500">Goal Contributions</p><p className="font-semibold">{formatCurrency(month.contributions)}</p></div>
-                          <div><p className="text-xs uppercase tracking-wide text-slate-500">Rollover Balance</p><p className="font-semibold">{formatCurrency(month.rolloverBalance)}</p></div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="budgets" className="space-y-5">
-            <BudgetLimitCard spendingCategories={spendingCategories} monthlyBudgets={monthlyBudgets} setMonthlyBudgets={setMonthlyBudgets} monthlySpent={monthlySpent} activeMonth={activeMonth} setActiveMonth={setActiveMonth} />
-          </TabsContent>
-
-          <TabsContent value="categories" className="space-y-5">
-            <div className="grid gap-5 xl:grid-cols-2">
-              <CategoryManager
-                title="Income Categories"
-                categories={incomeCategories}
-                setCategories={(updated) => {
-                  setIncomeCategories(updated);
-                  if (!updated.includes(incomeForm.category) && updated.length) setIncomeForm({ ...incomeForm, category: updated[0] });
-                  if (!updated.includes(incomeEditForm.category) && updated.length) setIncomeEditForm({ ...incomeEditForm, category: updated[0] });
-                }}
-              />
-              <CategoryManager
-                title="Spending Categories"
-                categories={spendingCategories}
-                setCategories={(updated) => {
-                  setSpendingCategories(updated);
-                  if (!updated.includes(spendingForm.category) && updated.length) setSpendingForm({ ...spendingForm, category: updated[0] });
-                  if (!updated.includes(spendingEditForm.category) && updated.length) setSpendingEditForm({ ...spendingEditForm, category: updated[0] });
-                }}
-              />
-            </div>
-          </TabsContent>
-        </Tabs>
-      </div>
-    </div>
-  );
-}
+    loadState();
+    buildTabs();
+    initDefaults();
+    wireStaticEvents();
+    renderAll();
+  </script>
+</body>
+</html>
